@@ -1,0 +1,80 @@
+# ops/Caddyfile — Cambly Recap app serving config (TECH §6).
+#
+# Deployed to <deploy-dir>/caddy/Caddyfile, bind-mounted READ-ONLY into the
+# always-on `cambly-caddy` container (image caddy:2-alpine). This file owns ALL
+# app-specific serving concerns — file_server, basic_auth, the auth-exempt
+# /healthz.json route, security headers, compression — so an upstream edge/proxy
+# holds only a dumb reverse_proxy stanza (see the sample edge snippet).
+#
+# Listens on loopback :8107 inside the container; the edge is its only client.
+# TLS is terminated upstream by your edge/reverse proxy, so this block speaks plain
+# HTTP on :8107 — no automatic HTTPS here.
+{
+	# Bind only to loopback and disable this site's own TLS/HTTP-app auto-HTTPS —
+	# the edge terminates TLS; cambly-caddy is a plain-HTTP upstream on :8107.
+	auto_https off
+}
+
+:8107 {
+	encode zstd gzip
+
+	# Security headers (web/security.md flavor). HSTS is honoured by the browser
+	# because the edge serves this origin over HTTPS.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Strict CSP for a fully self-contained site: no external hosts of any kind.
+		# 'unsafe-inline' is REQUIRED here because every page ships ONE inline <script>
+		# (the boot line + tap-to-reveal) plus inline <style> — there are no external
+		# assets to hash against, and no nonce plumbing on a static file_server. img-src
+		# allows data: for the inline SVG favicon (data-URI). Everything else is self/none.
+		Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+		-Server
+	}
+
+	# /healthz.json is auth-EXEMPT: zero personal content, safe for Gatus to poll.
+	@health path /healthz.json
+	handle @health {
+		root * /site
+		file_server
+	}
+
+	# Everything else is basic-auth'd personal content. The bcrypt hash is injected
+	# from deploy.env as {$BASIC_AUTH_HASH} — it never lands in the repo or the edge.
+	# Generate it with: docker run --rm caddy:2-alpine caddy hash-password
+	handle {
+		basic_auth {
+			admin {$BASIC_AUTH_HASH}
+		}
+		root * /site
+		file_server
+	}
+
+	# Friendly 404. Only a genuine 404 is rewritten to the static not-found page. A 401 from
+	# basic_auth is left ENTIRELY alone — no matcher below claims it — so Caddy emits its
+	# default 401 with the intact `WWW-Authenticate: Basic` header basic_auth already set, and
+	# the browser still shows its native credentials prompt (the personal-content gate must
+	# never silently degrade). Every other error gets a plain-text body but keeps its status.
+	# The not-found page carries zero personal data, so serving it without auth is fine.
+	handle_errors {
+		@notfound expression `{err.status_code} == 404`
+		handle @notfound {
+			root * /site
+			rewrite * /not-found.html
+			file_server {
+				status 404
+			}
+		}
+		@nonauth expression `{err.status_code} != 401`
+		handle @nonauth {
+			respond "{err.status_code} {err.status_text}" {err.status_code}
+		}
+	}
+
+	# Access log (container-local; ephemeral across recreates — fine for access logs).
+	log {
+		output file /var/log/caddy/cambly.access.log
+	}
+}

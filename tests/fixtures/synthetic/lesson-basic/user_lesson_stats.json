@@ -1,0 +1,11 @@
+{
+  "result": [
+    {
+      "id": "eeee0000000000000000st01",
+      "talkRatio": 47,
+      "wordsPerMinute": 68,
+      "uniqueWords": 132,
+      "_id": { "$oid": "eeee0000000000000000st01" }
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+# ops/docker-compose.yml — Cambly Recap (TECH §6).
+#
+# TWO services, namespaced so they can coexist with other apps on the same host:
+#
+#   generator     — cron-fired, `docker compose run --rm generator`; exits when done.
+#                   NOT auto-started (profile "oneshot" keeps `up -d` from launching it).
+#   cambly-caddy  — always-on; the app OWNS its serving stack. Serves the static site
+#                   read-only on 127.0.0.1:8107 with basic_auth + auth-exempt /healthz.json.
+#                   An upstream edge/reverse proxy only reverse_proxies here — the
+#                   single deliberate public (:443) touch point.
+#
+# Copy Dockerfile + package.json + src/ next to this file so `build: .` works.
+name: cambly-recap
+
+services:
+  generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cambly-recap-generator
+    container_name: cambly-recap-generator
+    # Not part of `docker compose up` — invoked explicitly by cron / push-state --run.
+    profiles: ["oneshot"]
+    env_file: /root/.cambly-recap/deploy.env
+    environment:
+      # TZ=UTC so week math anchors correctly (the box is UTC; run.js converts to
+      # Asia/Shanghai internally). DATA_DIR/SITE_DIR MUST point at the bind-mount
+      # targets below — run.js defaults to the relative "data"/"dist", which would
+      # miss the mounts and write inside the ephemeral container layer.
+      TZ: UTC
+      DATA_DIR: /data
+      SITE_DIR: /site
+      # CAMBLY_STATE_PATH defaults to /secrets/cambly-state.json (matches the mount),
+      # so it is intentionally not set here.
+    volumes:
+      - /opt/cambly-recap/data:/data                                    # raw/ · weeks/ · runs.ndjson · site-state.json (rw)
+      - /opt/cambly-recap/site:/site                                    # rendered static site (rw — renderer output)
+      - /root/.cambly-recap/cambly-state.json:/secrets/cambly-state.json:ro  # cookies + _ua (chmod 600 root)
+    mem_limit: 512m
+    cpus: 1.0
+    # No restart policy (run --rm), no ports, default bridge network.
+
+  cambly-caddy:
+    image: caddy:2-alpine
+    container_name: cambly-caddy
+    restart: unless-stopped
+    # Supplies BASIC_AUTH_HASH → the Caddyfile reads it as {$BASIC_AUTH_HASH}.
+    # (env_file is read by the docker daemon as root, so its 600 perms are fine
+    # regardless of the caddy container's own user.)
+    env_file: /root/.cambly-recap/deploy.env
+    ports:
+      - "127.0.0.1:8107:8107"                                          # loopback only; deploy.sh's on-box smoke hits this
+    volumes:
+      - /opt/cambly-recap/site:/site:ro                                # the static site, read-only
+      - /opt/cambly-recap/caddy/Caddyfile:/etc/caddy/Caddyfile:ro      # the app's own serving config
+      - caddy_data:/data                                               # caddy state (config/autosave)
+    networks:
+      - shared                                                         # join the edge network so it resolves us as cambly-caddy:8107
+    mem_limit: 64m
+    cpus: 0.25
+
+# The external bridge your edge/reverse proxy runs on. Marked external so compose
+# ATTACHES to it (never creates/owns it); the edge reverse_proxies cambly-caddy:8107
+# over this net. Set `name` to match your edge's network. Only cambly-caddy joins it —
+# the generator stays on the default bridge.
+networks:
+  shared:
+    name: edge_net
+    external: true
+
+volumes:
+  caddy_data:

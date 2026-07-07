@@ -1,0 +1,16 @@
+{
+  "result": [
+    {
+      "createdAt": { "$date": 1778641200000 },
+      "status": "sent",
+      "tutorNotes": "Lovely energy today — keep practicing past-tense verbs and you'll sound even more natural.",
+      "lessonId": "lesson-basic-001",
+      "feedbackSummary": {
+        "whatYouDidWell": ["Told a clear weekend story", "Used connectors like 'and'"],
+        "whatWeCanWorkOn": ["Past-tense verb endings"]
+      },
+      "_id": { "$oid": "dddd0000000000000000af01" },
+      "id": "dddd0000000000000000af01"
+    }
+  ]
+}

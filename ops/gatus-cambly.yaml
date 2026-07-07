@@ -1,0 +1,20 @@
+# ops/gatus-cambly.yaml — optional Gatus monitor for Cambly Recap (TECH §6).
+#
+# NOT deployed automatically. If you run Gatus (or any uptime monitor), add the
+# endpoint below to its config. Because the site itself is basic-auth'd personal
+# content, point the check at the auth-EXEMPT /healthz.json (zero personal content)
+# rather than the site root — and keep it on a private/gated dashboard if your
+# monitor has a public status page.
+#
+# The check hits /healthz.json and goes red on auth-expired, fetch-failed, or
+# email-failure runs (healthz ok:false), plus any time the caddy container is down
+# (the edge reverse_proxy returns 5xx with no upstream).
+
+endpoints:
+  - name: Cambly Recap
+    group: "Gated surfaces"
+    url: "https://your-domain.example.com/healthz.json"
+    interval: 300s
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].ok == true"

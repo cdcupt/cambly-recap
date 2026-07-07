@@ -1,0 +1,13 @@
+{
+  "result": [
+    {
+      "reasoning": "You described your weekend with clear, connected sentences.",
+      "userId": "student001",
+      "category": "fluency",
+      "lessonId": "lesson-basic-001",
+      "strength": "Your storytelling flowed naturally.",
+      "_id": { "$oid": "cccc0000000000000000pf01" },
+      "id": "cccc0000000000000000pf01"
+    }
+  ]
+}

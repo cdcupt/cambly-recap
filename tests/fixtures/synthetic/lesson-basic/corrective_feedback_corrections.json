@@ -1,0 +1,26 @@
+{
+  "result": [
+    {
+      "sentence": "I go to the mountain with my family.",
+      "userId": "student001",
+      "category": "grammar",
+      "lessonId": "lesson-basic-001",
+      "correction": "I went to the mountain with my family.",
+      "startOffsetSeconds": 8.5,
+      "reasoning": "The weekend is finished, so use the simple past 'went'.",
+      "_id": { "$oid": "bbbb0000000000000000co01" },
+      "id": "bbbb0000000000000000co01"
+    },
+    {
+      "sentence": "We hiking for three hours and eat a picnic.",
+      "userId": "student001",
+      "category": "grammar",
+      "lessonId": "lesson-basic-001",
+      "correction": "We hiked for three hours and ate a picnic.",
+      "startOffsetSeconds": 19.7,
+      "reasoning": "Past narration needs past-tense verbs: hiked, ate.",
+      "_id": { "$oid": "bbbb0000000000000000co02" },
+      "id": "bbbb0000000000000000co02"
+    }
+  ]
+}

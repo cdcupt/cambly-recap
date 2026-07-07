@@ -1,0 +1,13 @@
+node_modules/
+.env
+deploy.env
+data/
+*.log
+.DS_Store
+
+# Private artifacts — kept on disk, never published
+docs/
+beta/
+caddy-snippets/
+ops/deploy.sh
+bin/push-state.sh

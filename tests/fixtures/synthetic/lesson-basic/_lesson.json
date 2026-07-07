@@ -1,0 +1,8 @@
+{
+  "id": "lesson-basic-001",
+  "state": "done",
+  "scheduledStartAt": { "$date": 1778639400000 },
+  "durationMinutes": 30,
+  "tutorId": "tutor999",
+  "lessonPlanId": "plan-001"
+}

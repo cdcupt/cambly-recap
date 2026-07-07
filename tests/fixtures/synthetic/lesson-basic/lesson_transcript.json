@@ -1,0 +1,12 @@
+{
+  "id": "lesson-basic-001",
+  "lessonId": "lesson-basic-001",
+  "transcript": [
+    { "text": "Good morning! How was your weekend?", "startOffsetSeconds": 3.2, "userId": "tutor999" },
+    { "text": "It was great. I go to the mountain with my family.", "startOffsetSeconds": 8.5, "userId": "student001" },
+    { "text": "That sounds lovely. What did you do there?", "startOffsetSeconds": 14.1, "userId": "tutor999" },
+    { "text": "We hiking for three hours and eat a picnic.", "startOffsetSeconds": 19.7, "userId": "student001" },
+    { "text": "Nice! You should say we hiked for three hours.", "startOffsetSeconds": 26.0, "userId": "tutor999" },
+    { "text": "Okay, we hiked for three hours.", "startOffsetSeconds": 31.4, "userId": "student001" }
+  ]
+}

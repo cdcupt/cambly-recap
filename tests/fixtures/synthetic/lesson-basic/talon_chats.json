@@ -1,0 +1,20 @@
+{
+  "result": [
+    {
+      "_id": { "$oid": "aaaa0000000000000000ch01" },
+      "userId": "tutor999",
+      "chatId": "lesson-basic-001",
+      "message": "hiked (past tense of hike)",
+      "timestamp": { "$date": 1778639700000 },
+      "id": "aaaa0000000000000000ch01"
+    },
+    {
+      "_id": { "$oid": "aaaa0000000000000000ch02" },
+      "userId": "student001",
+      "chatId": "lesson-basic-001",
+      "message": "thank you, hiked",
+      "timestamp": { "$date": 1778639760000 },
+      "id": "aaaa0000000000000000ch02"
+    }
+  ]
+}

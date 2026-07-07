@@ -1,0 +1,16 @@
+# ops/cambly-recap.cron — the single host crontab line for Cambly Recap (TECH §6).
+#
+# APPEND this to the host crontab. cron env is minimal, so this uses absolute paths
+# and relies on `docker` being on the default cron PATH (/usr/bin:/bin on a typical
+# Debian box; add `PATH=...` above the line if `docker` is elsewhere).
+#
+# Schedule: Sun 23:30 UTC = Mon 07:30 Asia/Shanghai (adjust for your box's timezone
+# — verify with `timedatectl`). flock -n guarantees no overlapping runs; -E 0 maps a
+# held lock to exit 0, so a manual re-run racing the cron skips silently as a success
+# (never a scary failure). stdout+stderr append to the run log.
+#
+# To install idempotently:
+#   crontab -l 2>/dev/null | grep -qF 'cambly-recap.lock' || \
+#     ( crontab -l 2>/dev/null; cat ops/cambly-recap.cron ) | crontab -
+
+30 23 * * 0 cd /opt/cambly-recap/app && /usr/bin/flock -n -E 0 /run/lock/cambly-recap.lock docker compose run --rm generator >> /var/log/cambly-recap.log 2>&1

@@ -1,0 +1,14 @@
+{
+  "name": "cambly-recap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cambly Weekly Recap generator — zero-dependency Node service (fetch → normalize → summarize → build → render → mail).",
+  "engines": {
+    "node": ">=22.8.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80"
+  }
+}
