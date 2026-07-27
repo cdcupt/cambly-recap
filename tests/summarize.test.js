@@ -226,6 +226,63 @@ test("a non-transient 400 fails immediately without retry", async () => {
   }
 });
 
+// A 429 is two different failures wearing one status code. `insufficient_quota`
+// means the OpenAI account has no credit left — no number of retries clears it,
+// and reporting it as a bare "OpenAI HTTP 429" reads as a rate limit, which is
+// what hid a four-service billing outage on 2026-07-26.
+test("a 429 insufficient_quota fails immediately and names the billing cause", async () => {
+  const body = JSON.stringify({
+    error: {
+      message: "You exceeded your current quota, please check your plan and billing details.",
+      type: "insufficient_quota",
+      code: "insufficient_quota",
+    },
+  });
+  const mock = await startMock(() => ({ status: 429, body }));
+  try {
+    await assert.rejects(
+      () => summarizeWeek({ bundle: "B", base: mock.base, retries: 3, ...FAST }),
+      (e) =>
+        e instanceof OpenAIError &&
+        e.status === 429 &&
+        /insufficient_quota/.test(e.message) &&
+        /credit|billing/i.test(e.message),
+    );
+    assert.equal(mock.requests.length, 1, "quota exhaustion must not be retried");
+  } finally {
+    await mock.close();
+  }
+});
+
+test("a genuine rate-limit 429 is still transient and retried 3×", async () => {
+  const body = JSON.stringify({
+    error: { message: "Rate limit reached", type: "requests", code: "rate_limit_exceeded" },
+  });
+  const mock = await startMock(() => ({ status: 429, body }));
+  try {
+    await assert.rejects(
+      () => summarizeWeek({ bundle: "B", base: mock.base, retries: 3, ...FAST }),
+      (e) => e instanceof OpenAIError && e.status === 429 && !/insufficient_quota/.test(e.message),
+    );
+    assert.equal(mock.requests.length, 3);
+  } finally {
+    await mock.close();
+  }
+});
+
+test("a 429 with an unparseable body stays transient (fails safe toward retry)", async () => {
+  const mock = await startMock(() => ({ status: 429, body: "<html>gateway</html>" }));
+  try {
+    await assert.rejects(
+      () => summarizeWeek({ bundle: "B", base: mock.base, retries: 3, ...FAST }),
+      (e) => e instanceof OpenAIError && e.status === 429,
+    );
+    assert.equal(mock.requests.length, 3);
+  } finally {
+    await mock.close();
+  }
+});
+
 test("summarizeWeek recovers when a 500 is followed by a 200", async () => {
   const mock = await startMock((i) => (i === 0 ? { status: 500, body: "{}" } : { status: 200, body: completionEnvelope(validWire()) }));
   try {
