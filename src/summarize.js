@@ -320,10 +320,33 @@ export function buildRequestBody({ bundle, model = openaiModel(), rejections = n
 // ── The OpenAI call ────────────────────────────────────────────────────────────
 
 /**
+ * True when a 429 body is OpenAI's `insufficient_quota` — the account has no
+ * credit left, as opposed to a genuine rate limit. The two arrive with the same
+ * status, but only one of them can be waited out.
+ *
+ * Fails safe toward "not a quota error": an unparseable or unexpected body keeps
+ * the existing transient/retry behaviour rather than turning a recoverable blip
+ * into a hard failure.
+ *
+ * @param {string} body raw response text
+ * @returns {boolean}
+ */
+function isQuotaExhausted(body) {
+  try {
+    const err = JSON.parse(body)?.error;
+    return err?.type === "insufficient_quota" || err?.code === "insufficient_quota";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * One structured-output OpenAI call for the week, with retry + schema validation.
  *
- * Retries (default 3): a transport error or a 5xx/429 status is transient and retried;
- * a valid 2xx whose JSON fails the strict wire schema is retried too (I-SM ③). Any
+ * Retries (default 3): a transport error or a 5xx/rate-limit-429 status is transient
+ * and retried; a valid 2xx whose JSON fails the strict wire schema is retried too
+ * (I-SM ③). A 429 carrying `insufficient_quota` is NOT transient — the account is out
+ * of credit, so it fails immediately with a message naming billing as the cause. Any
  * other non-2xx (400/401/…) is a hard OpenAIError immediately (not transient).
  * Exhausting all attempts throws OpenAIError (transport/status) or SchemaInvalidError
  * (schema) — both map to the run's fetch-failed outcome.
@@ -371,6 +394,16 @@ export async function summarizeWeek({
       break;
     }
 
+    // A 429 is two different failures sharing one status code. Quota exhaustion
+    // is permanent until someone pays, so retrying just burns the run and buries
+    // the cause under a status code that reads as "slow down".
+    if (status === 429 && isQuotaExhausted(text)) {
+      throw new OpenAIError(
+        "OpenAI HTTP 429 insufficient_quota — the API account is out of credit; " +
+          "top up billing at platform.openai.com (retrying cannot clear this)",
+        { status, attempts: attempt },
+      );
+    }
     // Transient server statuses → retry.
     if (status >= 500 || status === 429) {
       lastTransport = new OpenAIError(`OpenAI HTTP ${status}`, { status, attempts: attempt });
