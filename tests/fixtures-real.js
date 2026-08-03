@@ -11,7 +11,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const REAL_STUDENT_UID = "0123456789abcdef01234567";
+// The student UID the fixtures' transcript lines were actually recorded against.
+//
+// normalize.js labels each turn student|tutor by comparing its userId to this
+// value, so a UID that matches nothing silently labels EVERY line "tutor" — the
+// recent-fixture tests then find zero student lines and fail an assertion that
+// reads like a fixture problem. That is exactly what the sanitisation placeholder
+// below did once the personal id was parameterised out into $CAMBLY_UID (which is
+// what src/fetch.js and src/normalize.js already use).
+//
+// So: take the real value from the environment like the rest of the repo does,
+// and keep the placeholder only as the "no UID configured" sentinel that
+// recentFixturesSkip() checks for.
+export const PLACEHOLDER_STUDENT_UID = "0123456789abcdef01234567";
+export const REAL_STUDENT_UID = process.env.CAMBLY_UID || PLACEHOLDER_STUDENT_UID;
 
 /** The 11 archived lesson dirs → their expected CST weekId (from TECH U-WK ⑧). */
 export const EXPECTED_WEEK = {
@@ -55,6 +68,13 @@ export function recentFixturesSkip() {
   const dir = recentFixturesDir();
   if (!fs.existsSync(dir)) {
     return `recent fixtures absent (${dir} not found) — run with RECENT_FIXTURES_DIR set`;
+  }
+  // The dir existing is NOT enough. These suites assert on student transcript
+  // lines, and speaker labelling is resolved against $CAMBLY_UID — so without it
+  // they cannot pass, no matter what is on disk. Skip with a reason instead of
+  // failing an assertion that misleadingly blames the fixtures.
+  if (REAL_STUDENT_UID === PLACEHOLDER_STUDENT_UID) {
+    return "CAMBLY_UID not set — speaker labelling would mark every line 'tutor'";
   }
   return false;
 }
