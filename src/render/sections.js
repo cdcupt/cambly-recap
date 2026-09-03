@@ -10,7 +10,7 @@
 
 import { esc } from "./esc.js";
 import { dayChipUpper } from "./dates.js";
-import { sectionHead } from "./components.js";
+import { sectionHead, weekLabelSpan } from "./components.js";
 import { BANDS } from "../coach.js";
 
 const MDOT = "·";
@@ -171,7 +171,9 @@ function askList(asks) {
 export function planSection(vm, num = "08") {
   const p = vm && vm.plan;
   if (!p || typeof p !== "object") return "";
-  const title = `Plan for the week of ${esc(p.weekLabel)}`;
+  // The h2 is a flex row (number · title): the title is ONE span so its flowing text and
+  // the non-breaking week label wrap together instead of becoming two flex items.
+  const title = `<span>Plan for the week of ${weekLabelSpan(p.weekLabel)}</span>`;
   const focus = hasText(p.focus) ? `<p class="pfocus">${esc(p.focus)}</p>` : "";
   const items = arr(p.items);
   const list = items.length ? `<ul class="plan">${items.map(planItem).join("")}</ul>` : "";
@@ -224,7 +226,7 @@ export const SECTION_STYLES = `
 .mk .track i{display:block;height:100%;border-radius:2px;background:var(--teal-wash)}
 .mk .track i.on{background:var(--teal)}
 .mk .dband{grid-area:band;font-size:.68rem;font-weight:800;letter-spacing:.03em;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:2px 8px;white-space:nowrap}
-.mk .dev{grid-area:ev;font-size:.78rem;color:var(--mmuted)}
+.mk .dev{grid-area:ev;font-size:.78rem;color:var(--ink-soft)}
 .mk .sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .mk .lvh3{font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;font-weight:800;color:var(--acc-ink);margin:12px 0 4px}
 .mk .advice{list-style:none;margin:0;padding:0}
@@ -233,7 +235,7 @@ export const SECTION_STYLES = `
 .mk .advice .an{flex:0 0 24px;height:24px;line-height:24px;text-align:center;font-style:normal;font-size:.7rem;font-weight:800;color:#fff;background:var(--acc);border-radius:99px}
 .mk .advice b{display:block;color:var(--mink)}
 .mk .advice span{display:block;color:var(--ink-soft);font-size:.82rem;margin-top:1px}
-.mk .lvfoot{font-size:.74rem;color:var(--mmuted);font-style:italic;margin:10px 0 4px}
+.mk .lvfoot{font-size:.74rem;color:var(--ink-soft);font-style:italic;margin:10px 0 4px}
 /* ----- recap v2: plan (teal mirror of the practice frame) ----- */
 .mk .planbox{background:linear-gradient(180deg,var(--teal-wash),transparent 130px);border:1px solid rgba(31,111,104,.28);border-radius:16px;padding:14px 13px 12px;margin:12px 0}
 .mk .planbox h2{margin-bottom:4px}

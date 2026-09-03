@@ -720,11 +720,12 @@ test("tutorFocus strips a worksheet tail out of the ai coach summary; other fiel
 
 // ── beta finding 2: the tutor sign-off shows once (highlight, not the Focus box) ──
 
-test("a Focus-box coaching line that duplicates the class sign-off highlight is stripped (finding 2)", () => {
+test("the tutor's sign-off shows ONCE: with Cambly's tutorNotes in the Focus box the card tutorNote is dropped; a Focus line that duplicates the MOMENT is still stripped (finding 2)", () => {
+  const signoff = "Thank you for visiting today! Looking forward to seeing you again soon";
   const l = mkLesson({
     aiTutorFeedback: {
       finalAIFeedback: null,
-      tutorNotes: "Thank you for visiting today! Looking forward to seeing you again soon",
+      tutorNotes: signoff,
       tutorNotesTranslated: null,
       finalSuggestedNextLesson: "Keep practising the past tense",
     },
@@ -734,15 +735,24 @@ test("a Focus-box coaching line that duplicates the class sign-off highlight is 
       {
         lessonId: "L1",
         moment: { text: "A calm reflective close.", quotes: [] },
-        tutorNote: "Thank you for visiting today! Looking forward to seeing you again soon 🎉",
+        tutorNote: `${signoff} 🎉`, // the LLM's copy of the same note
       },
     ],
   });
   const { weekVM } = buildWeekVM({ window: WIN, lessons: [l], wire, now: NOW });
   const c = weekVM.classes[0];
-  assert.match(c.tutorNote, /Thank you for visiting/); // the class highlight keeps it
-  assert.equal(c.tutorFocus.tutorNotes, null); // stripped from the Focus box → shown once
+  assert.equal(c.tutorNote, null); // the Focus box shows Cambly's own note verbatim → the card does not repeat it
+  assert.equal(c.tutorFocus.tutorNotes, signoff); // verbatim, un-stripped
   assert.equal(c.tutorFocus.nextFocus, "Keep practising the past tense"); // other fields intact
+  // The finding-2 dedupe against the class highlight still holds for the MOMENT text.
+  const dup = buildWeekVM({
+    window: WIN,
+    lessons: [l],
+    wire: mkWire({ classes: [{ lessonId: "L1", moment: { text: `${signoff} 🎉`, quotes: [] }, tutorNote: null }] }),
+    now: NOW,
+  }).weekVM.classes[0];
+  assert.equal(dup.tutorFocus.tutorNotes, null); // stripped from the Focus box → shown once, in the moment
+  assert.equal(dup.tutorNote, null);
 });
 
 test("a distinct Focus-box coaching line is NOT stripped when it does not duplicate the highlight (finding 2)", () => {
@@ -1475,3 +1485,85 @@ test(
     }
   },
 );
+
+// ── polish pass: gloss-shaped vocab quotes · tutorNote shown once · compose.js re-exports ──
+
+test("a quote that opens with the term + a separator and then a gloss ('term, gloss' · 'term/ gloss' · 'term: gloss') is a definition, not a usage — the clean LLM example shows instead", () => {
+  const glosses = [
+    ["tourist trap", "Tourist trap, a place that attracts many tourists and charges them too much"],
+    ["attire", "attire/ clothes you wear"],
+    ["paradox", "Paradox: a situation that seems impossible but is actually true"],
+  ];
+  const lesson = mkLesson({ transcript: glosses.map(([, text]) => ({ text, speaker: "tutor" })) });
+  const wire = mkWire({
+    vocabulary: glosses.map(([term, quote]) => ({
+      term, meaning: "m", quote, quoteBy: "tutor", lessonId: "L1", fromCorrectionId: null,
+      example: `We talked about the ${term} in class.`,
+    })),
+  });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW });
+  for (const [term] of glosses) {
+    const v = weekVM.vocabulary.find((x) => x.term === term);
+    assert.equal(v.quote, null, `${term}: the gloss is not a usage`);
+    assert.equal(v.quoteBy, null);
+    assert.equal(v.example, `We talked about the ${term} in class.`, `${term}: the clean model sentence fills in (existing RULE 8 path)`);
+  }
+  assert.equal(weekVM.build.rejects.filter((r) => r.type === "vocab-example").length, 3, "each drop is logged, item kept");
+  assert.doesNotThrow(() => validateWeek(weekVM));
+});
+
+test("the gloss shape is case-insensitive, tolerates an inflected leading term and every listed separator; a real usage that merely starts with the term is kept", () => {
+  const lines = {
+    plural: "Tourist traps, places that attract too many visitors",
+    dash: "Paradox - a statement that contradicts itself",
+    emdash: "Attire — the clothes you wear for an occasion",
+    paren: "Gossip (talk about other people's lives)",
+    usage: "Attire matters more than you think at a wedding",
+    compound: "Tourist-trap prices are always higher near the station",
+    later: "I think a paradox, honestly, is hard to explain",
+  };
+  const lesson = mkLesson({ transcript: Object.values(lines).map((text) => ({ text, speaker: "student" })) });
+  const vocab = (term, quote) => ({ term, meaning: "m", quote, quoteBy: "student", lessonId: "L1", fromCorrectionId: null, example: null });
+  const quoteOf = (v) => buildWeekVM({ window: WIN, lessons: [lesson], wire: mkWire({ vocabulary: [v] }), now: NOW }).weekVM.vocabulary[0].quote;
+  assert.equal(quoteOf(vocab("tourist trap", lines.plural)), null, "plural leading term + comma → gloss");
+  assert.equal(quoteOf(vocab("paradox", lines.dash)), null, "spaced hyphen → gloss");
+  assert.equal(quoteOf(vocab("attire", lines.emdash)), null, "em dash → gloss");
+  assert.equal(quoteOf(vocab("gossip", lines.paren)), null, "opening parenthesis → gloss");
+  assert.equal(quoteOf(vocab("attire", lines.usage)), lines.usage, "the term as the subject of a real sentence is a usage");
+  assert.equal(quoteOf(vocab("tourist trap", lines.compound)), lines.compound, "a hyphenated compound is not a separator");
+  assert.equal(quoteOf(vocab("paradox", lines.later)), lines.later, "a comma later in the line never trips it — the term must open the line");
+});
+
+test("classes[].tutorNote is dropped when Cambly's own tutorNotes reach the Focus box (the note shows once, verbatim); kept when the lesson has no tutor note", () => {
+  const feedback = (tutorNotes) => ({ finalAIFeedback: { whatYouDidWell: "Great idioms today." }, tutorNotes, tutorNotesTranslated: null, finalSuggestedNextLesson: null });
+  const withNote = mkLesson({ lessonId: "A", startAtCST: "2026-05-13T09:00:00+08:00", aiTutorFeedback: feedback("You made class fly by, see you Thursday!") });
+  const noNote = mkLesson({ lessonId: "B", startAtCST: "2026-05-14T09:00:00+08:00", aiTutorFeedback: feedback(null) });
+  const legacy = mkLesson({ lessonId: "C", startAtCST: "2026-05-15T09:00:00+08:00" }); // no ai_tutor feedback at all
+  const wire = mkWire({
+    classes: [
+      // A topic summary the LLM put in tutorNote — must not render beside the tutor's real note.
+      { lessonId: "A", moment: { text: "m", quotes: [] }, tutorNote: "We discussed work routines and the past tense." },
+      { lessonId: "B", moment: { text: "m", quotes: [] }, tutorNote: "Keep it up!" },
+      { lessonId: "C", moment: { text: "m", quotes: [] }, tutorNote: "Nice work." },
+    ],
+  });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [withNote, noNote, legacy], wire, now: NOW });
+  const [a, b, c] = weekVM.classes;
+  assert.equal(a.tutorNote, null, "the Focus box already shows the tutor's note verbatim");
+  assert.equal(a.tutorFocus.tutorNotes, "You made class fly by, see you Thursday!");
+  assert.equal(b.tutorNote, "Keep it up!", "no Cambly tutor note → the wire note stays");
+  assert.equal(b.tutorFocus.tutorNotes, null);
+  assert.equal(c.tutorNote, "Nice work.", "legacy lesson (no ai_tutor feedback) → the wire note stays");
+  assert.equal(c.tutorFocus, null);
+  assert.doesNotThrow(() => validateWeek(weekVM));
+});
+
+test("refactor: build.js keeps its public exports — humanizePattern / nextWeekLabel are the compose.js functions re-exported", async () => {
+  const compose = await import("../src/compose.js");
+  assert.equal(humanizePattern, compose.humanizePattern);
+  assert.equal(nextWeekLabel, compose.nextWeekLabel);
+  assert.equal(typeof compose.composeReview, "function");
+  assert.equal(typeof compose.composeLevel, "function");
+  assert.equal(typeof compose.composePlan, "function");
+  assert.equal(typeof compose.tutorFocusOf, "function");
+});

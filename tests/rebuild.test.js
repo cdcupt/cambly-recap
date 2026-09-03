@@ -491,3 +491,17 @@ test("regression (CLI): `node src/run.js --rebuild 2026-08-24` exits 2 with the 
   assert.equal(fs.existsSync(path.join(dirs.dataDir, "runs.ndjson")), false, "no runs.ndjson entry");
   assert.equal(fs.existsSync(dirs.siteDir), false, "no render");
 });
+
+// ── refactor: the tutors-map helpers moved to src/tutors.js; run.js re-exports the self-heal ──
+
+test("refactor: run.js re-exports patchTutorNames from src/tutors.js; readTutorsMap/persistTutorsMap round-trip data/tutors.json without shrinking it", async () => {
+  const tutors = await import("../src/tutors.js");
+  assert.equal(patchTutorNames, tutors.patchTutorNames, "same function object — no divergent copy");
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cambly-tutors-"));
+  assert.deepEqual(tutors.readTutorsMap(dataDir, fs), {}, "absent file → {}");
+  const first = tutors.persistTutorsMap(dataDir, SEED_TUTORS, fs);
+  assert.deepEqual(first, SEED_TUTORS);
+  const second = tutors.persistTutorsMap(dataDir, { result: [{ id: "tutor001", displayName: "Niki V." }] }, fs);
+  assert.deepEqual(Object.keys(second).sort(), ["tutor001", "tutor999"], "merge never drops a previously persisted tutor");
+  assert.deepEqual(tutors.readTutorsMap(dataDir, fs), second, "what was written reads back");
+});

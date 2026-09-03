@@ -124,7 +124,7 @@ test("levelSection: A2 fills exactly one cell, C1 fills all seven; zero advice o
 test("planSection returns '' when absent, else the teal frame: title with the next-week label, focus line, day-chipped items, ASK rows", () => {
   assert.equal(planSection(goldenWeek(), "08"), "");
   const html = planSection(goldenWeekV2(), "08");
-  assert.ok(html.startsWith('<section id="m-plan" class="pad"><div class="planbox"><h2><span class="num">08</span>Plan for the week of Jun 1–7</h2>'));
+  assert.ok(html.startsWith('<section id="m-plan" class="pad"><div class="planbox"><h2><span class="num">08</span><span>Plan for the week of <span class="nowrap">Jun 1–7</span></span></h2>'));
   assert.match(html, /<p class="pfocus">Articles before every singular count noun, in every sentence you say\. &lt;script&gt;p\(\)&lt;\/script&gt;<\/p>/);
   assert.equal((html.match(/<ul class="plan">/g) || []).length, 1);
   assert.deepEqual(/<ul class="plan">[\s\S]*?<\/ul>/.exec(html)[0].match(/<i class="daychip">([A-Z]+)<\/i>/g), [
@@ -144,7 +144,7 @@ test("planSection omits the ASK block when askTutor is empty and escapes the wee
   vm.plan.weekLabel = 'Jun 1–7 <b onclick="x">';
   const html = planSection(vm, "08");
   assert.ok(!html.includes("Ask your tutor next class"));
-  assert.ok(html.includes("Plan for the week of Jun 1–7 &lt;b onclick=&quot;x&quot;&gt;</h2>"));
+  assert.ok(html.includes('Plan for the week of <span class="nowrap">Jun 1–7 &lt;b onclick=&quot;x&quot;&gt;</span></span></h2>'));
 });
 
 // ── styles ────────────────────────────────────────────────────────────────────────
@@ -159,4 +159,13 @@ test("SECTION_STYLES is scoped under .mk, stays ≤ 7 KB, wraps every text cell,
   assert.match(SECTION_STYLES, /\.mk \.lead,[^{]*\{overflow-wrap:anywhere;word-break:break-word\}/);
   assert.match(SECTION_STYLES, /\.mk \.sr\{position:absolute;width:1px;height:1px/);
   assert.ok(!/content:\s*"[^"]*[✓→]/.test(SECTION_STYLES), "no decorative pseudo-content glyphs — they live in markup");
+});
+
+test("level legibility: the dimension evidence lines and the footnote use --ink-soft (not the 4.35:1 muted tone), sizes unchanged", () => {
+  assert.match(SECTION_STYLES, /\.mk \.dev\{grid-area:ev;font-size:\.78rem;color:var\(--ink-soft\)\}/, "evidence lines");
+  assert.match(SECTION_STYLES, /\.mk \.lvfoot\{font-size:\.74rem;color:var\(--ink-soft\);font-style:italic;margin:10px 0 4px\}/, "footnote");
+  // The rendered markup still carries both.
+  const html = levelSection(goldenWeekV2(), "02");
+  assert.ok(html.includes('<span class="dev">77 wpm with short pauses; self-repairs quickly.</span>'));
+  assert.ok(html.includes('<p class="lvfoot">Estimated from this week'));
 });

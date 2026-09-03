@@ -25,9 +25,10 @@ test("renderIndex: reverse-chron rows, derived totals summed across weeks", () =
   // newest first — measured inside the weeks list (the progress block above it
   // names the same weeks in chronological order inside its sparkline titles)
   const list = html.slice(html.indexOf('<ul class="weeks">'));
-  const a = list.indexOf("Week of May 25");
-  const b = list.indexOf("Week of May 18");
-  const c = list.indexOf("Week of May 11");
+  const a = list.indexOf('Week of <span class="nowrap">May 25');
+  const b = list.indexOf('Week of <span class="nowrap">May 18');
+  const c = list.indexOf('Week of <span class="nowrap">May 11');
+  assert.ok(a > 0 && b > 0 && c > 0, "every row found");
   assert.ok(a < b && b < c, "rows in reverse-chron order");
   // totals: 3 weeks · (1+1+2)=4 classes · (60+60+90)=210 min · (3+5+2)=10 corrections
   assert.match(html, /<i>3 weeks<\/i><i>4 classes<\/i><i>210 min<\/i><i>10 corrections<\/i>/);
@@ -37,7 +38,7 @@ test("U-RN-② empty week is a non-clickable <span>, muted, and links to no page
   const html = renderIndex([goldenWeek(), emptyWeek()], { siteState: healthySiteState() });
   assert.match(
     html,
-    /<li class="empty"><span class="wrow"><span class="wl"><b>Week of Jun 8 – 14, 2026 — no classes this week<\/b><\/span><\/span><\/li>/,
+    /<li class="empty"><span class="wrow"><span class="wl"><b>Week of <span class="nowrap">Jun 8 – 14, 2026<\/span> — no classes this week<\/b><\/span><\/span><\/li>/,
   );
   assert.ok(!html.includes('href="weeks/2026-06-08.html"'), "empty week has no page link");
 });
@@ -48,7 +49,7 @@ test("U-RN-⑥ ● NEW badge lands on the latest non-empty week only", () => {
   const html = renderIndex(weeks, { siteState: healthySiteState() });
   assert.equal((html.match(/class="new"/g) || []).length, 1, "exactly one NEW badge");
   // it belongs to the non-empty May 25 row, not the empty Jun 8 row
-  assert.match(html, /Week of May 25 – 31, 2026<span class="new">NEW<\/span>/);
+  assert.match(html, /Week of <span class="nowrap">May 25 – 31, 2026<\/span><span class="new">NEW<\/span>/);
   assert.ok(!/Jun 8 – 14[^<]*<span class="new">/.test(html), "empty newest week has no NEW");
 });
 
@@ -90,12 +91,22 @@ test("renderIndex: body carries the ix modifier and a single h1", () => {
   assert.equal((html.match(/<h1>/g) || []).length, 1);
 });
 
-test("clean-week framing: a 0-fix week reads 'Clean week ✓'; a fixed week keeps 'N fixes'", () => {
-  const clean = weekWith("2026-05-11", "May 11 – 17, 2026", 0); // stats.corrections = 0
+test("fixes pill: a 0-fix v2 week (integrity.derivedGrammar defined) reads 'Clean week ✓'; a 0-fix v1 week reads the muted 'No Cambly fixes'; a fixed week keeps 'N fixes'", () => {
+  // v2: the transcript WAS checked for grammar (derivedGrammar present, even when 0) → a genuine clean week.
+  const cleanV2 = weekWith("2026-05-04", "May 4 – 10, 2026", 0, {
+    integrity: { reportedCorrections: 0, renderedGrammar: 0, derivedGrammar: 0, renderedVocab: 0, renderedPhrasing: 0, rejectedCount: 0 },
+  });
+  // v1: weekWith's integrity carries no derivedGrammar — Cambly simply returned no correction records.
+  const zeroV1 = weekWith("2026-05-11", "May 11 – 17, 2026", 0); // stats.corrections = 0
   const fixed = weekWith("2026-05-18", "May 18 – 24, 2026", 5); // stats.corrections = 5
-  const html = renderIndex([clean, fixed], { siteState: healthySiteState() });
-  assert.match(html, /<span class="wc">Clean week ✓<\/span>/, "0-fix week reframed to a clean-week label");
-  assert.match(html, /<span class="wc">5 fixes<\/span>/, "non-zero week keeps the honest count");
+  const html = renderIndex([cleanV2, zeroV1, fixed], { siteState: healthySiteState() });
+  const rowFor = (weekId) => new RegExp(`href="weeks/${weekId}\\.html">[\\s\\S]*?<span class="wc[^"]*">([^<]*)</span></a>`).exec(html);
+  assert.equal(rowFor("2026-05-04")[1], "Clean week ✓", "analysed 0-fix week → clean-week label");
+  assert.equal(rowFor("2026-05-11")[1], "No Cambly fixes", "unanalysed 0-fix week → honest 'no records' label");
+  assert.equal(rowFor("2026-05-18")[1], "5 fixes", "non-zero week keeps the honest count");
+  assert.match(html, /<span class="wc">Clean week ✓<\/span>/, "clean week keeps the accent pill");
+  assert.match(html, /<span class="wc muted">No Cambly fixes<\/span>/, "v1 zero week wears the muted variant, not the accent pill");
+  assert.equal((html.match(/class="wc muted"/g) || []).length, 1, "only the v1 zero week is muted");
   assert.ok(!html.includes(">0 fixes<"), "no '0 fixes' pill reads as scoring zero of a good thing");
 });
 

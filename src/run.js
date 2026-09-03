@@ -18,7 +18,8 @@
 //
 // Tutors (v2): /api/tutors answers an OBJECT map keyed by id → normalized to the flat map
 // {id: {id, displayName}}, merged into data/tutors.json (never shrinks), used to name each
-// lesson's tutor and to self-heal published VMs with an empty tutor (patchTutorNames).
+// lesson's tutor and to self-heal published VMs with an empty tutor (patchTutorNames —
+// the map + self-heal helpers live in src/tutors.js and are re-exported below).
 // Offline modes (v2): --rebuild=<weekId>[,…] re-summarizes weeks from complete data/raw
 // dirs (LLM yes, Cambly no, mail only with --mail); --render re-renders with zero LLM and
 // zero network. Neither rewrites site-state.json.
@@ -57,19 +58,28 @@ import {
 import {
   normalizeLessonDir,
   normalizeTutors,
-  mergeTutors,
   lessonTutorId,
   ENDPOINT_FILES as RAW_FILES,
 } from "./normalize.js";
+import {
+  listExistingWeekIds,
+  readWeekVM,
+  writeWeekVM,
+  readTutorsMap,
+  persistTutorsMap,
+  patchTutorNames,
+} from "./tutors.js";
 import { generateWeekVM } from "./build.js";
 import { openaiBase, openaiKey, openaiModel, summarizeWeek } from "./summarize.js";
 import { buildSite, readWeeks, readSiteState, computeFacts } from "./render/site.js";
 import { writeHealthz } from "./render/healthz.js";
 import { OUTCOME, RECOVERY_COMMANDS, sendEmail, siteUrl } from "./mail.js";
 
+// Re-exported for the callers/tests that import the tutor self-heal from the run wrapper.
+export { patchTutorNames };
+
 const SCHEMA_VERSION = 1;
 const STATE_PATH_DEFAULT = "/secrets/cambly-state.json";
-const TUTORS_FILE = "tutors.json"; // data/tutors.json — the persisted flat tutors map
 const WEEK_ID_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ── on-disk helpers (all take an injectable fsImpl for tests) ────────────────────
@@ -84,31 +94,6 @@ function loadCamblyState(fsImpl, statePath, log) {
   }
 }
 
-function listExistingWeekIds(dataDir, fsImpl) {
-  try {
-    return fsImpl
-      .readdirSync(path.join(dataDir, "weeks"))
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => f.replace(/\.json$/, ""));
-  } catch {
-    return [];
-  }
-}
-
-function readWeekVM(dataDir, weekId, fsImpl) {
-  try {
-    return JSON.parse(fsImpl.readFileSync(path.join(dataDir, "weeks", `${weekId}.json`), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function writeWeekVM(dataDir, weekId, vm, fsImpl) {
-  const dir = path.join(dataDir, "weeks");
-  fsImpl.mkdirSync(dir, { recursive: true });
-  fsImpl.writeFileSync(path.join(dir, `${weekId}.json`), JSON.stringify(vm, null, 2) + "\n");
-}
-
 /** Write a lesson's raw dir; tutors.json carries {result: <the lesson's slice of the tutors map>}. */
 function writeRaw(dir, files, rec, tutorsMap, fsImpl) {
   const tid = lessonTutorId(rec);
@@ -119,62 +104,6 @@ function writeRaw(dir, files, rec, tutorsMap, fsImpl) {
   for (const [name, fname] of Object.entries(RAW_FILES)) {
     if (name in files) fsImpl.writeFileSync(path.join(dir, fname), JSON.stringify(files[name], null, 2));
   }
-}
-
-/** data/tutors.json → the flat tutors map ({} when absent or unreadable). */
-function readTutorsMap(dataDir, fsImpl) {
-  try {
-    return normalizeTutors(JSON.parse(fsImpl.readFileSync(path.join(dataDir, TUTORS_FILE), "utf8")));
-  } catch {
-    return {};
-  }
-}
-
-/** Merge freshly fetched tutors OVER the persisted map and write it back (the file never shrinks). */
-function persistTutorsMap(dataDir, fetched, fsImpl) {
-  const merged = mergeTutors(readTutorsMap(dataDir, fsImpl), fetched);
-  fsImpl.mkdirSync(dataDir, { recursive: true });
-  fsImpl.writeFileSync(path.join(dataDir, TUTORS_FILE), JSON.stringify(merged, null, 2) + "\n");
-  return merged;
-}
-
-/** The tutor display name for a published class, via raw/<lessonId>/_lesson.json → tutors map. */
-function rawTutorNameOf(dataDir, lessonId, tutorsMap, fsImpl) {
-  try {
-    const rec = JSON.parse(fsImpl.readFileSync(path.join(dataDir, "raw", lessonId, "_lesson.json"), "utf8"));
-    const tid = lessonTutorId(rec);
-    return tid && tutorsMap[tid] ? tutorsMap[tid].displayName : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Tutor self-heal (spec A2): every class of every data/weeks/*.json with an empty `tutor`
- * is named via raw/<lessonId>/_lesson.json (tutorId || tutorIds[0]) → tutors map →
- * displayName. A VM is rewritten only when a class changed (idempotent, byte-stable).
- * @param {{dataDir:string, fsImpl?:object, tutorsMap?:object, log?:function}} args
- * @returns {number} classes patched
- */
-export function patchTutorNames({ dataDir, fsImpl = fs, tutorsMap = {}, log = () => {} }) {
-  const map = normalizeTutors(tutorsMap);
-  if (Object.keys(map).length === 0) return 0;
-  let patched = 0;
-  for (const weekId of listExistingWeekIds(dataDir, fsImpl).sort()) {
-    const vm = readWeekVM(dataDir, weekId, fsImpl);
-    if (!vm || !Array.isArray(vm.classes)) continue;
-    const classes = vm.classes.map((c) => {
-      if (!c || typeof c !== "object" || c.tutor) return c;
-      const name = rawTutorNameOf(dataDir, c.lessonId, map, fsImpl);
-      return name ? { ...c, tutor: name } : c;
-    });
-    const changed = classes.filter((c, i) => c !== vm.classes[i]).length;
-    if (changed === 0) continue;
-    writeWeekVM(dataDir, weekId, { ...vm, classes }, fsImpl);
-    patched += changed;
-    log(`tutor self-heal: ${weekId} — named ${changed} class(es)`);
-  }
-  return patched;
 }
 
 /** site-state.json — the one state file the renderer (banner) and healthz serialize from (§3). */

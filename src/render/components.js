@@ -55,6 +55,16 @@ export function sectionNum(i) {
 }
 
 /**
+ * A week label, escaped and wrapped so it never breaks at its spaced en dash
+ * ("Jun 29 – Jul 5"). Used wherever a label lands in flowing text: the week-page h1,
+ * the Plan title, the index rows and the footer nav. Labels are ≤ 16 chars, so
+ * nowrap can never force horizontal overflow at 320px.
+ */
+export function weekLabelSpan(label) {
+  return `<span class="nowrap">${esc(label)}</span>`;
+}
+
+/**
  * The sections a week renders, in page order, each with its sequential number.
  * @param {object} vm
  * @returns {{key:string,id:string,chip:string,num:string}[]}
@@ -269,13 +279,15 @@ export function vocabSection(vocabulary, resolve, num = "02") {
 const isDerived = (item) => item && item.derived === true;
 
 /**
- * One correction row: strikethrough said → bold fix, why + day suffix. A transcript-
- * derived row (spotted by the recap, not flagged by Cambly) carries a small source tag.
+ * One correction row: strikethrough said → bold fix, why + day suffix. In a MIXED week a
+ * transcript-derived row (spotted by the recap, not flagged by Cambly) carries a small
+ * source tag; when every row is derived the section sub-line already says so and the
+ * per-row tag is omitted (`tagDerived:false`).
  */
-function corrRow(item, resolve) {
+function corrRow(item, resolve, tagDerived = true) {
   const day = weekdayShort(resolve.startAt(item.lessonId));
   const suffix = day ? ` ${MDOT} ${day}` : "";
-  const src = isDerived(item) ? `<i class="src">transcript</i>` : "";
+  const src = tagDerived && isDerived(item) ? `<i class="src">transcript</i>` : "";
   return (
     `<div class="corr"><span class="said">${esc(item.said)}</span> ` +
     `<span class="arr">${ARR}</span> <span class="fix">${esc(item.fix)}</span>${src}` +
@@ -287,8 +299,13 @@ function corrRow(item, resolve) {
 // and collapses the rest behind a native <details> "Show n more" (mockup F3).
 const GRAMMAR_PREVIEW = 2;
 
-/** One grammar group: pattern + count badge, optional rule line, corr rows. */
-export function grammarGroup(group, resolve) {
+/**
+ * One grammar group: pattern + count badge, optional rule line, corr rows.
+ * @param {object} group
+ * @param {{startAt:(id:string)=>string|null}} resolve
+ * @param {{tagDerived?:boolean}} [opts] tag derived rows (true in a mixed week; false when every row is derived)
+ */
+export function grammarGroup(group, resolve, { tagDerived = true } = {}) {
   const g = group || {};
   const items = Array.isArray(g.items) ? g.items : [];
   const collapse = items.length > 3;
@@ -298,10 +315,10 @@ export function grammarGroup(group, resolve) {
     g.rule !== null && g.rule !== undefined && g.rule !== ""
       ? `<p class="rule">${esc(g.rule)}</p>`
       : "";
-  const visibleRows = visible.map((it) => corrRow(it, resolve)).join("");
+  const visibleRows = visible.map((it) => corrRow(it, resolve, tagDerived)).join("");
   const more = hidden.length
     ? `<details class="more"><summary>Show ${hidden.length} more</summary>` +
-      hidden.map((it) => corrRow(it, resolve)).join("") +
+      hidden.map((it) => corrRow(it, resolve, tagDerived)).join("") +
       `</details>`
     : "";
   return (
@@ -331,15 +348,21 @@ function grammarSsub(groups, itemCount, derivedCount) {
   return `${fixes} ${EMDASH} ${parts.join(` ${MDOT} `)}, grouped into ${habits}. Strike = what you said.`;
 }
 
-/** The grammar section — corrections grouped into habits. */
+/**
+ * The grammar section — corrections grouped into habits. The per-row TRANSCRIPT tag is
+ * shown only in a MIXED week (some Cambly-anchored rows, some derived): when every row is
+ * derived the sub-line already reads "N spotted in your transcript" and tagging each row
+ * would only repeat it.
+ */
 export function grammarSection(grammarGroups, resolve, num = "03") {
   const groups = Array.isArray(grammarGroups) ? grammarGroups : [];
   const items = groups.flatMap((g) => (Array.isArray(g.items) ? g.items : []));
   const derivedCount = items.filter(isDerived).length;
+  const tagDerived = derivedCount < items.length;
   const title = "Grammar corrections";
   const ssub = groups.length ? grammarSsub(groups, items.length, derivedCount) : "";
   const body = groups.length
-    ? groups.map((g) => grammarGroup(g, resolve)).join("")
+    ? groups.map((g) => grammarGroup(g, resolve, { tagDerived })).join("")
     : emptyNote("No grammar corrections this week.");
   return `<section id="m-grammar" class="pad">${sectionHead(num, title, ssub)}${body}</section>`;
 }
@@ -417,13 +440,17 @@ export function practiceSection(practice, resolve, num = "05") {
   return `<section id="m-practice" class="pad"><div class="practice">${head}${body}</div></section>`;
 }
 
-/** Week footer nav — prev · All weeks · next, prev/next already skip empty weeks. */
+/**
+ * Week footer nav — prev · All weeks · next, prev/next already skip empty weeks. Each
+ * link's text sits in ONE inner <span> (the anchor is a flex box for its 44px tap
+ * target, so loose text + the nowrap label would otherwise become two flex items).
+ */
 export function footerNav(prev, next) {
   const slot = (w, isNext) => {
     if (!w) return `<span class="gap" aria-hidden="true"></span>`;
-    const label = `Week of ${esc(w.weekLabel)}`;
+    const label = `Week of ${weekLabelSpan(w.weekLabel)}`;
     const text = isNext ? `${label} ${ARR}` : `${LARR} ${label}`;
-    return `<a href="${esc(w.weekId)}.html">${text}</a>`;
+    return `<a href="${esc(w.weekId)}.html"><span>${text}</span></a>`;
   };
   return (
     `<footer class="wknav">` +
@@ -441,7 +468,7 @@ export function footerNav(prev, next) {
  */
 export function indexRow(week, { isLatest = false } = {}) {
   const w = week || {};
-  const label = `Week of ${esc(w.weekLabel)}`;
+  const label = `Week of ${weekLabelSpan(w.weekLabel)}`;
   if (w.isEmpty === true) {
     return (
       `<li class="empty"><span class="wrow"><span class="wl">` +
@@ -454,16 +481,29 @@ export function indexRow(week, { isLatest = false } = {}) {
   const corrections = s.corrections ?? 0;
   const badge = isLatest ? `<span class="new">NEW</span>` : "";
   const sub = `${classes} ${pluralize(classes, "class", "classes")} ${MDOT} ${minutes} min`;
-  // A zero-fix week is a clean week, not a low score — reframe the pill so "0" never
-  // reads as scoring zero of a good thing; non-zero weeks keep the honest "N fixes".
-  const pill =
-    corrections === 0
-      ? "Clean week ✓"
-      : `${corrections} ${pluralize(corrections, "fix", "fixes")}`;
   const li = isLatest ? `<li class="latest">` : `<li>`;
   return (
     `${li}<a class="wrow" href="weeks/${esc(w.weekId)}.html">` +
     `<span class="wl"><b>${label}${badge}</b><span>${sub}</span></span>` +
-    `<span class="wc">${pill}</span></a></li>`
+    fixesPill(w, corrections) +
+    `</a></li>`
   );
+}
+
+/**
+ * The index row's fixes pill. A non-zero week keeps the honest "N fixes". A zero week is
+ * read against how it was analysed: a v2 week (integrity.derivedGrammar defined — its
+ * transcript WAS checked for grammar) is a genuine "Clean week ✓"; a v1 week (no
+ * derivedGrammar) with zero corrections only means Cambly returned no correction
+ * records — since Cambly stopped returning them that is not evidence of clean speech,
+ * so it reads "No Cambly fixes" in the muted (non-accent) variant.
+ */
+function fixesPill(w, corrections) {
+  if (corrections !== 0) {
+    return `<span class="wc">${corrections} ${pluralize(corrections, "fix", "fixes")}</span>`;
+  }
+  const analysed = isBlock(w.integrity) && w.integrity.derivedGrammar !== undefined;
+  return analysed
+    ? `<span class="wc">Clean week ✓</span>`
+    : `<span class="wc muted">No Cambly fixes</span>`;
 }

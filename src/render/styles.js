@@ -5,8 +5,9 @@
 // only additions over the mockup are the responsive column (2×2 → 1×4 stats, a
 // centered ≤760px paper sheet), the no-JS / print answer-sheet fallback, the
 // always-visible server-rendered banner, the muted zero-item note, the honest-
-// semantics empty index row (a <span>, styled to match the mockup's <a>), and a
-// universal :focus-visible ring. Single string, byte-budgeted ≤ 15 KB (F6).
+// semantics empty index row (a <span>, styled to match the mockup's <a>), the
+// wrapping chip nav (eight chips no longer fit one phone-width row), the non-breaking
+// week label and a universal :focus-visible ring. Single string, byte-budgeted ≤ 15 KB (F6).
 
 export const STYLES = `
 /* ============ tokens + product mockup styles — lifted from DESIGN.html .mk ============ */
@@ -37,11 +38,12 @@ export const STYLES = `
 .mk .stat{background:var(--surface);border:1px solid var(--mline-soft);border-radius:13px;padding:11px 12px 9px;box-shadow:0 1px 2px rgba(27,24,19,.05),0 6px 20px rgba(27,24,19,.06)}
 .mk .stat .n{font-family:var(--disp);font-size:1.42rem;line-height:1;color:var(--acc)}
 .mk .stat .l{font-size:.68rem;color:var(--mmuted);margin-top:5px;letter-spacing:.03em;text-transform:uppercase;font-weight:600}
-.mk nav.chips{position:sticky;top:0;z-index:9;background:rgba(247,242,234,.92);backdrop-filter:blur(8px);border-block:1px solid var(--mline-soft);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
-.mk nav.chips::-webkit-scrollbar{display:none}
-.mk nav.chips a{display:inline-block;text-decoration:none;color:var(--ink-soft);font-size:.78rem;font-weight:700;padding:12px 10px;transition:color .2s var(--ease)}
-.mk nav.chips a:first-child{padding-left:16px}
+/* Chips wrap (two rows on phones), never a hidden-scroll row; ≥44px tap targets. */
+.mk nav.chips{position:sticky;top:0;z-index:9;display:flex;flex-wrap:wrap;padding:0 6px;background:rgba(247,242,234,.92);backdrop-filter:blur(8px);border-block:1px solid var(--mline-soft)}
+.mk nav.chips a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;text-decoration:none;color:var(--ink-soft);font-size:.78rem;font-weight:700;padding:8px 10px;white-space:nowrap;transition:color .2s var(--ease)}
 .mk nav.chips a:hover,.mk nav.chips a:focus-visible{color:var(--acc-ink)}
+/* Week labels (≤16 chars) never break at the spaced en dash. */
+.mk .nowrap{white-space:nowrap;overflow-wrap:normal;word-break:normal}
 .mk section{padding:22px 0 4px}
 .mk h2{font-family:var(--disp);font-weight:600;font-size:1.28rem;letter-spacing:-.005em;margin:0 0 2px;display:flex;align-items:baseline;gap:8px;border:0;padding-top:0}
 .mk h2 .num{font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:.72rem;color:var(--acc);font-weight:800;letter-spacing:.08em}
@@ -141,6 +143,8 @@ export const STYLES = `
 .ix .wl b{font-family:var(--disp);font-size:.95rem;font-weight:600;display:block}
 .ix .wl span{font-size:.74rem;color:var(--mmuted)}
 .ix .wc{font-size:.7rem;font-weight:800;color:var(--acc-ink);background:var(--acc-wash);border-radius:99px;padding:3px 9px;white-space:nowrap}
+/* v1 week with no Cambly correction records — a fact, not a score. */
+.ix .wc.muted{color:var(--ink-soft);background:var(--surface2);border:1px solid var(--mline-soft);font-weight:700}
 .ix li.latest .wrow{border-color:rgba(216,74,27,.4);border-width:1.5px}
 .ix li.latest .new{font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#fff;background:var(--acc);border-radius:99px;padding:2px 7px;margin-left:6px;vertical-align:middle}
 .ix li.empty .wrow{background:transparent;border-style:dashed;box-shadow:none;color:var(--mmuted)}

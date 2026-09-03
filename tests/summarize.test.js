@@ -541,3 +541,15 @@ test("unparseable model content is treated as schema-invalid and retried", async
     await mock.close();
   }
 });
+
+test("RULES tighten the coaching text: grammar/phrasing `why` = the rule behind the CHANGE (≤ 20 words, never what was already right); rule 13 makes tutorNote a verbatim tutor remark or null; numbering 1–13 intact", () => {
+  assert.match(RULES, /Every grammar item's why explains the rule behind the\s+CHANGE \(what was wrong and why the fix is right\) in at most 20 words — never a remark on\s+what was already correct, never praise\./, "rule 4");
+  assert.match(RULES, /why = the rule behind the change, at most 20 words \(rule 4\); correctionId null; lessonId set\./, "rule 6 (derived items) points at rule 4");
+  assert.match(RULES, /better keeps the student's meaning; why explains the rule behind the\s+change in at most 20 words and never comments on what was already correct;/, "rule 7 (phrasing)");
+  assert.match(RULES, /13\. Tutor notes: classes\[\]\.tutorNote = the tutor's OWN closing remark, copied verbatim from\s+that class's Tutor notes or Chat lines/, "rule 13 (a)");
+  assert.match(RULES, /or null when the tutor left none — never a topic summary, never your own words\./, "rule 13 (b)");
+  const nums = [...RULES.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+  assert.deepEqual(nums, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], "existing numbering untouched; one rule appended");
+  // No schema change rode along.
+  assert.deepEqual(Object.keys(wireSchema().properties.classes.items.properties).sort(), ["lessonId", "moment", "title", "tutorNote"]);
+});

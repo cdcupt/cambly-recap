@@ -334,7 +334,7 @@ export const CHART_STYLES = `
 .ix .progress{padding:22px 16px 6px}
 .ix .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 4px}
 .ix .tile{min-width:0;background:var(--surface);border:1px solid var(--mline-soft);border-radius:13px;padding:11px 11px 10px;box-shadow:0 1px 2px rgba(27,24,19,.05),0 6px 20px rgba(27,24,19,.06)}
-.ix .tile h3{margin:0;font-size:.74rem;font-weight:600;line-height:1.3;color:var(--mmuted);overflow-wrap:anywhere}
+.ix .tile h3{margin:0;font-size:.74rem;font-weight:600;line-height:1.3;min-height:2.6em;color:var(--mmuted);overflow-wrap:anywhere}
 .ix .tv{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;margin:4px 0 0;font-size:1.5rem;font-weight:600;line-height:1.1;color:var(--mink)}
 .ix .tv .tu{font-size:.72rem;font-weight:600;color:var(--mmuted)}
 .ix .delta{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 6px;margin:7px 0 0;font-size:.66rem;line-height:1.4}
@@ -369,5 +369,5 @@ export const CHART_STYLES = `
 .ix .ptable td{font-variant-numeric:tabular-nums;color:var(--mink)}
 .ix .ptable .t,.ix .ptable th[scope=row]{text-align:left}
 .ix .ptable th[scope=row]{font-size:.78rem;font-weight:600;letter-spacing:0;text-transform:none;color:var(--mink)}
-@media (min-width:760px){.ix .tiles{grid-template-columns:repeat(4,1fr)}}
+@media (min-width:760px){.ix .tiles{grid-template-columns:repeat(4,1fr)}.ix .tile h3{min-height:0}}
 `.trim();

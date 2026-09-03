@@ -89,10 +89,10 @@ test("U-RN-⑦ footer prev/next skip empty weeks", () => {
   const older = fs.readFileSync(path.join(siteDir, "weeks", "2026-05-11.html"), "utf8");
   const newer = fs.readFileSync(path.join(siteDir, "weeks", "2026-05-25.html"), "utf8");
   // older week's "next" jumps over the empty 05-18 straight to 05-25
-  assert.ok(older.includes('href="2026-05-25.html">Week of May 25 – 31, 2026 →'), "next skips empty");
+  assert.ok(older.includes('href="2026-05-25.html"><span>Week of <span class="nowrap">May 25 – 31, 2026</span> →</span>'), "next skips empty");
   assert.ok(!older.includes('2026-05-18.html'), "no link to the empty week");
   // newest week's "prev" jumps back over the empty week to 05-11
-  assert.ok(newer.includes('href="2026-05-11.html">← Week of May 11 – 17, 2026'), "prev skips empty");
+  assert.ok(newer.includes('href="2026-05-11.html"><span>← Week of <span class="nowrap">May 11 – 17, 2026</span></span>'), "prev skips empty");
 });
 
 test("I-GR byte-stable: two runs over the same data produce an identical tree", () => {

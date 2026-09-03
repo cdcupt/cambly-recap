@@ -180,7 +180,7 @@ test(
     assert.equal(derived.said, derivedSaid, "the LLM's case-flipped span is kept verbatim");
     assert.equal(vm.integrity.derivedGrammar, 1);
     assert.equal(vm.stats.corrections, 1);
-    assert.ok(html.includes('<i class="src">transcript</i>'), "derived row tagged on the page");
+    assert.ok(!html.includes('<i class="src">transcript</i>'), "every row is derived → no per-row tag (the sub-line below carries the provenance)");
     assert.ok(html.includes(esc(derivedSaid)), "the derived said reached the page");
     assert.ok(html.includes(`<div class="n">1</div><div class="l">corrections</div>`), "header stat counts the derived row");
     assert.match(html, /1 grammar fix — 1 spotted in your transcript, grouped into 1 habit/);
@@ -208,7 +208,7 @@ test(
     assert.deepEqual(ids, ["m-review", "m-level", "m-classes", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-plan"]);
     assert.deepEqual([...html.matchAll(/<span class="num">(\d\d)<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "07", "08"]);
     assert.match(html, /<span class="lvbig">B1\+<\/span>/);
-    assert.ok(html.includes(`Plan for the week of ${esc(vm.plan.weekLabel)}</h2>`));
+    assert.ok(html.includes(`Plan for the week of <span class="nowrap">${esc(vm.plan.weekLabel)}</span></span></h2>`));
     const pqCards = (html.match(/<button class="pq" aria-expanded="false" aria-controls="pa\d+">/g) || []).length;
     assert.ok(pqCards >= 1, `≥1 tap-to-reveal card in HTML (got ${pqCards})`);
     assert.ok(html.includes("querySelectorAll('.pq')"), "reveal script shipped (practice present)");

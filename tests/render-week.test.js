@@ -27,7 +27,7 @@ test("renderWeek golden: single h1, all five section anchors + chips, stat band"
   const html = renderWeek(goldenWeek());
 
   assert.equal((html.match(/<h1>/g) || []).length, 1, "exactly one h1");
-  assert.match(html, /<h1>Week of <span class="accent">May 25 – 31, 2026<\/span><\/h1>/);
+  assert.match(html, /<h1>Week of <span class="accent"><span class="nowrap">May 25 – 31, 2026<\/span><\/span><\/h1>/);
   for (const id of ["m-classes", "m-vocab", "m-grammar", "m-phrasing", "m-practice"]) {
     assert.ok(html.includes(`id="${id}"`), `section ${id} present`);
     assert.ok(html.includes(`href="#${id}"`), `chip for ${id} present`);
@@ -271,7 +271,7 @@ test("v2: a VM carrying every block renders all eight sections in order Review �
   assert.match(html, /<span class="num">02<\/span>Level estimate<\/h2>/);
   assert.match(html, /<span class="num">03<\/span>The class log<\/h2>/);
   assert.match(html, /<span class="num">07<\/span>Practice — tap to reveal<\/h2>/);
-  assert.match(html, /<span class="num">08<\/span>Plan for the week of Jun 1–7<\/h2>/);
+  assert.match(html, /<span class="num">08<\/span><span>Plan for the week of <span class="nowrap">Jun 1–7<\/span><\/span><\/h2>/);
 });
 
 test("v2: numbering stays sequential when only SOME optional blocks are present (chips follow)", () => {
@@ -282,7 +282,7 @@ test("v2: numbering stays sequential when only SOME optional blocks are present 
   const planOnly = renderWeek(goldenWeekV2({ review: null, level: null }));
   assert.deepEqual(sectionIds(planOnly), [...LEGACY_IDS, "m-plan"]);
   assert.deepEqual(sectionNums(planOnly), ["01", "02", "03", "04", "05", "06"]);
-  assert.match(planOnly, /<span class="num">06<\/span>Plan for the week of/);
+  assert.match(planOnly, /<span class="num">06<\/span><span>Plan for the week of/);
 });
 
 test("v2: the header names the tutor; each class card reads an eyebrow (min · with <tutor>) and the title-or-topic as its headline", () => {
@@ -404,4 +404,77 @@ test("v2: the level band is the page's one big number and the page stays self-co
   assert.equal((html.match(/class="lvbig"/g) || []).length, 1);
   assert.ok(!/(?:src|href)\s*=\s*["']\s*(?:https?:)?\/\//i.test(html), "no external resource");
   assert.ok(Buffer.byteLength(html, "utf8") < 200 * 1024);
+});
+
+// ── polish pass: nav chips · per-row tag · header tutors · non-breaking week labels ──
+
+/** goldenWeekV2 reduced to its ONE derived grammar row (every row derived, Σ closes on 0). */
+function allDerivedWeek() {
+  const v2 = goldenWeekV2();
+  return goldenWeekV2({
+    grammarGroups: [v2.grammarGroups[1]],
+    vocabulary: v2.vocabulary.map((v) => ({ ...v, fromCorrectionId: null })),
+    phrasing: v2.phrasing.map((p) => ({ ...p, fromCorrectionId: null })),
+    stats: { classes: 2, minutes: 90, corrections: 1, expressions: 3 },
+    integrity: { reportedCorrections: 0, renderedGrammar: 1, derivedGrammar: 1, renderedVocab: 0, renderedPhrasing: 0, rejectedCount: 0 },
+  });
+}
+
+test("nav chips WRAP instead of scrolling: flex-wrap on the sticky bar, ≥44px tap targets, no hidden-overflow row, all eight chips present", () => {
+  const nav = /\.mk nav\.chips\{([^}]*)\}/.exec(STYLES)[1];
+  assert.match(nav, /position:sticky/, "the bar stays sticky");
+  assert.match(nav, /display:flex/);
+  assert.match(nav, /flex-wrap:wrap/, "chips wrap onto a second row when they do not fit");
+  assert.ok(!/overflow-x:auto|white-space:nowrap|scrollbar-width/.test(nav), "no scrolling row that hides Phrasing/Practice/Plan off-screen with no affordance");
+  const chip = /\.mk nav\.chips a\{([^}]*)\}/.exec(STYLES)[1];
+  assert.match(chip, /display:inline-flex/);
+  assert.match(chip, /min-height:44px/, "WCAG 2.5.5 tap target kept with the tighter vertical padding");
+  assert.match(chip, /padding:8px 10px/, "vertical padding tightened from 12px");
+  assert.match(chip, /white-space:nowrap/, "a chip's own label never breaks mid-word");
+  assert.ok(!STYLES.includes("nav.chips a:first-child"), "the bar carries the gutter (padding) so a wrapped second row aligns with the first");
+  assert.equal(chipHrefs(renderWeek(goldenWeekV2())).length, 8, "a full v2 week ships all eight chips");
+});
+
+test("v2: the per-row TRANSCRIPT tag is omitted when EVERY grammar row is derived (the sub-line already says so) and kept only in a mixed week", () => {
+  const mixed = renderWeek(goldenWeekV2());
+  assert.equal((mixed.match(/<i class="src">transcript<\/i>/g) || []).length, 1, "mixed week: the derived row is tagged");
+  const html = renderWeek(allDerivedWeek());
+  assert.ok(!html.includes('class="src"'), "all-derived week: no per-row tag");
+  assert.match(html, /<p class="ssub">1 grammar fix — 1 spotted in your transcript, grouped into 1 habit\./, "the sub-line carries the provenance instead");
+  assert.ok(html.includes('<span class="fix">I go to the office every day</span><span class="why">'), "the row itself is unchanged apart from the tag");
+});
+
+test("header tutor line: all named → 'with A, B'; some unnamed → 'with Niki V. and 1 other tutor' (pluralised); none named → no 'with'", () => {
+  const named = goldenWeekV2();
+  assert.match(renderWeek(named), /<p class="sub">2 classes with Niki V\. · published/, "one tutor named once");
+  named.classes[1].tutor = "Alex R.";
+  assert.match(renderWeek(named), /<p class="sub">2 classes with Niki V\., Alex R\. · published/, "two named tutors listed");
+  const some = goldenWeekV2();
+  some.classes[1].tutor = "";
+  assert.match(renderWeek(some), /<p class="sub">2 classes with Niki V\. and 1 other tutor · published/, "an unnamed class is counted, not dropped");
+  const more = goldenWeekV2();
+  more.classes = [...more.classes, { ...more.classes[1], lessonId: "L3", tutor: "" }];
+  more.classes[1].tutor = "   "; // whitespace-only counts as unnamed
+  assert.match(renderWeek(more), /<p class="sub">3 classes with Niki V\. and 2 other tutors · published/, "plural 'tutors'");
+  const none = goldenWeekV2();
+  for (const c of none.classes) c.tutor = "";
+  const sub = /<p class="sub">[\s\S]*?<\/p>/.exec(renderWeek(none))[0];
+  assert.match(sub, /^<p class="sub">2 classes · published/, "no 'with' at all when no class names a tutor");
+  assert.ok(!sub.includes(" with "), "no dangling 'with'");
+  assert.ok(!sub.includes("other tutor"), "no 'N other tutors' without a named one to anchor it");
+});
+
+test("cross-month week labels never break at the spaced en dash: h1, Plan title and footer nav wrap the label in .nowrap; the CSS rule exists", () => {
+  const vm = goldenWeekV2({ weekLabel: "Jun 29 – Jul 5" });
+  vm.plan.weekLabel = "Jul 27 – Aug 2";
+  const html = renderWeek(vm, {
+    prev: { weekId: "2026-06-22", weekLabel: "Jun 22–28" },
+    next: { weekId: "2026-07-06", weekLabel: "Jul 6–12" },
+  });
+  assert.ok(html.includes('<h1>Week of <span class="accent"><span class="nowrap">Jun 29 – Jul 5</span></span></h1>'), "h1");
+  assert.ok(html.includes('<h2><span class="num">08</span><span>Plan for the week of <span class="nowrap">Jul 27 – Aug 2</span></span></h2>'), "plan title: one title span (the h2 is a flex row) around the nowrap label");
+  assert.ok(html.includes('<a href="2026-06-22.html"><span>← Week of <span class="nowrap">Jun 22–28</span></span></a>'), "footer prev");
+  assert.ok(html.includes('<a href="2026-07-06.html"><span>Week of <span class="nowrap">Jul 6–12</span> →</span></a>'), "footer next");
+  assert.match(STYLES, /\.mk \.nowrap\{white-space:nowrap;overflow-wrap:normal;word-break:normal\}/, "the rule also cancels the defensive overflow-wrap:anywhere inherited from its container");
+  assert.ok(html.includes('<title>Week of Jun 29 – Jul 5 · Cambly Recap</title>'), "the <title> stays plain text");
 });

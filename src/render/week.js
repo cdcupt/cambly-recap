@@ -21,6 +21,7 @@ import {
   phrasingSection,
   practiceSection,
   footerNav,
+  weekLabelSpan,
 } from "./components.js";
 import { reviewSection, levelSection, planSection } from "./sections.js";
 
@@ -36,19 +37,33 @@ function buildResolver(vm) {
   };
 }
 
+const hasText = (v) => typeof v === "string" && v.trim() !== "";
+
+/**
+ * The header's "with …" tutor phrase. Named tutors are listed once each; classes whose
+ * tutor is unknown (empty string) are counted honestly as "N other tutor(s)" rather than
+ * silently dropped — "5 classes with Niki V. and 1 other tutor". No "with" at all when
+ * no class names a tutor.
+ */
+function withTutors(classes) {
+  const named = [...new Set(classes.map((c) => c.tutor).filter(hasText))];
+  if (named.length === 0) return "";
+  const unnamed = classes.filter((c) => !hasText(c.tutor)).length;
+  const others = unnamed ? ` and ${unnamed} other ${pluralize(unnamed, "tutor", "tutors")}` : "";
+  return ` with ${esc(named.join(", "))}${others}`;
+}
+
 function headerBlock(vm) {
   const classes = vm.classes || [];
   const n = classes.length;
-  const tutors = [...new Set(classes.map((c) => c.tutor).filter(Boolean))];
-  const withTutors = tutors.length ? ` with ${esc(tutors.join(", "))}` : "";
   const sub =
-    `${n} ${pluralize(n, "class", "classes")}${withTutors} ${MDOT} ` +
+    `${n} ${pluralize(n, "class", "classes")}${withTutors(classes)} ${MDOT} ` +
     `published ${esc(publishedLabel(vm.publishedAt))} ${MDOT} ` +
     `<a class="backlink" href="../index.html">${LARR} All weeks</a>`;
   return (
     `<header class="pad">` +
     `<span class="eyebrow">● Weekly recap</span>` +
-    `<h1>Week of <span class="accent">${esc(vm.weekLabel)}</span></h1>` +
+    `<h1>Week of <span class="accent">${weekLabelSpan(vm.weekLabel)}</span></h1>` +
     `<p class="sub">${sub}</p>` +
     statBand(vm.stats) +
     `</header>`

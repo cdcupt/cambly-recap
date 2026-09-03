@@ -329,7 +329,7 @@ test("CHART_STYLES: ≤ 5 KB, every rule scoped under .ix, table-wrap scrolls ho
   assert.ok(selectors.length > 20);
   for (const sel of selectors) assert.ok(sel.startsWith(".ix "), `unscoped selector: ${sel}`);
   assert.match(CHART_STYLES, /\.ix \.table-wrap\{overflow-x:auto/);
-  assert.match(CHART_STYLES, /@media \(min-width:760px\)\{\.ix \.tiles\{grid-template-columns:repeat\(4,1fr\)\}\}/);
+  assert.match(CHART_STYLES, /@media \(min-width:760px\)\{\.ix \.tiles\{grid-template-columns:repeat\(4,1fr\)\}\.ix \.tile h3\{min-height:0\}\}/);
 });
 
 test("self-contained: the block references no external resource (no http, src=, href=, xmlns)", () => {
@@ -339,4 +339,9 @@ test("self-contained: the block references no external resource (no http, src=, 
   assert.ok(!/href=/i.test(html));
   assert.ok(!/xmlns/i.test(html));
   assert.ok(!/<script/i.test(html));
+});
+
+test("tile label: a two-line min-height in the 2-column layout so the four big numbers align when one label wraps; released at ≥760px where every label fits one line", () => {
+  assert.match(CHART_STYLES, /\.ix \.tile h3\{margin:0;font-size:\.74rem;font-weight:600;line-height:1\.3;min-height:2\.6em;/, "2 lines × line-height 1.3");
+  assert.match(CHART_STYLES, /@media \(min-width:760px\)\{[^}]*\}\.ix \.tile h3\{min-height:0\}\}/, "reset inside the 4-column breakpoint");
 });
