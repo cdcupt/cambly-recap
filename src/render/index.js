@@ -9,6 +9,7 @@
 import { htmlDocument } from "./layout.js";
 import { banner, indexRow } from "./components.js";
 import { pluralize } from "./dates.js";
+import { progressBlock } from "./chart.js";
 
 function totalsBar(weeks) {
   const t = weeks.reduce(
@@ -65,6 +66,7 @@ export function renderIndex(weeks, { siteState = {} } = {}) {
     `</header>` +
     `<main>` +
     firstRun +
+    progressBlock(sorted) +
     `<nav class="pad" aria-label="All weeks"><ul class="weeks">${rows}</ul></nav>` +
     `</main>`;
 
