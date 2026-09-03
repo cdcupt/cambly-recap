@@ -92,16 +92,27 @@ test(
     const win = weekWindow(Date.parse(lessons[0].startAtCST));
     const anchor = lessons[0];
     const anchorLine = anchor.transcript.find((t) => t.speaker === "student").text;
+    // A short real student line (3–20 words) for the transcript-DERIVED grammar item; its
+    // first letter is flipped in case so the case-insensitive guard is exercised on real data.
+    const wc = (s) => s.trim().split(/\s+/).length;
+    const shortLine = anchor.transcript.find((t) => t.speaker === "student" && wc(t.text) >= 3 && wc(t.text) <= 20)?.text ?? anchorLine;
+    const flipCase = (s) => (s[0] === s[0].toUpperCase() ? s[0].toLowerCase() : s[0].toUpperCase()) + s.slice(1);
+    const derivedSaid = flipCase(shortLine);
 
-    // The wire the real summarizer would emit for a 0-correction week: no grammar;
-    // vocab quoting a real student line; a moment whose highlight is a real corpus line
-    // the prose does NOT embed; practice citing lessonIds (no correction ids to cite).
+    // The wire the real summarizer would emit for a 0-correction week: no Cambly grammar
+    // records, ONE transcript-derived grammar item; vocab quoting a real student line; a
+    // moment whose highlight is a real corpus line the prose does NOT embed; practice citing
+    // lessonIds (no correction ids to cite); titles for the generic "Pro Lesson" topics; and
+    // the three v2 blocks (review · level · plan).
     const wire = emptyWire({
-      classes: lessons.map((l) => {
+      classes: lessons.map((l, i) => {
         const s = l.transcript.find((t) => t.speaker === "student");
-        return { lessonId: l.lessonId, moment: { text: "A memorable stretch of the conversation.", quotes: s ? [s.text] : [] }, tutorNote: null };
+        return { lessonId: l.lessonId, title: `Real class ${i + 1} about work`, moment: { text: "A memorable stretch of the conversation.", quotes: s ? [s.text] : [] }, tutorNote: null };
       }),
-      vocabulary: [{ term: "a real phrase", meaning: "something said in class", quote: anchorLine, quoteBy: "student", lessonId: anchor.lessonId, fromCorrectionId: null }],
+      vocabulary: [{ term: "a real phrase", meaning: "something said in class", quote: anchorLine, quoteBy: "student", lessonId: anchor.lessonId, fromCorrectionId: null, example: null }],
+      grammarGroups: [
+        { pattern: "Spotted in the transcript", rule: "A synthetic rule for the test.", items: [{ correctionId: null, said: derivedSaid, fix: `${shortLine} (fixed)`, why: "synthetic why", lessonId: anchor.lessonId }] },
+      ],
       practice: lessons.map((l, i) => ({
         format: i === 0 ? "FILL_THE_GAP" : "SAY_IT_BETTER",
         prompt: "____ from this week",
@@ -110,6 +121,23 @@ test(
         why: "drawn from this week's real material",
         sourceIds: [l.lessonId],
       })),
+      review: {
+        summary: "A synthetic three-sentence review. It names what improved. It names the biggest issue.",
+        wentWell: [{ point: "Kept talking in long turns", quote: anchorLine, lessonId: anchor.lessonId }],
+        needsWork: [{ issue: "Synthetic issue", fix: "Synthetic fix", quote: derivedSaid, lessonId: anchor.lessonId }],
+      },
+      level: {
+        overall: "B1+",
+        confidence: lessons.length < 3 ? "low" : "medium",
+        dimensions: ["range", "accuracy", "fluency", "interaction", "coherence"].map((name) => ({ name, band: "B1+", evidence: `synthetic ${name} evidence` })),
+        summary: "Synthetic level summary. Synthetic next-band gap.",
+        advice: [{ title: "Synthetic advice", detail: "Do the synthetic thing daily." }],
+      },
+      plan: {
+        focus: "Synthetic focus for next week.",
+        items: [{ day: "Mon", task: "Synthetic task.", why: "synthetic why" }, { day: "Daily", task: "Synthetic daily task.", why: "" }],
+        askTutor: ["Ask the tutor a synthetic question."],
+      },
     });
 
     const mock = await startMock(() => ({ status: 200, body: envelope(wire) }));
@@ -138,9 +166,49 @@ test(
     }
 
     // ── Bug 2: a non-empty practice section with ≥1 tap-to-reveal card + reveal script,
-    // built with ZERO grammar this week.
-    assert.equal(vm.grammarGroups.length, 0, "recent week has no grammar");
+    // built with ZERO Cambly grammar records this week (the one grammar row is derived).
+    assert.equal(vm.integrity.reportedCorrections, 0, "recent week has no Cambly correction records");
     assert.ok(vm.practice.length > 0, "practice VM non-empty");
+
+    // ── v2: the transcript-derived grammar row survived the case-insensitive real-corpus
+    // guard, sits OUTSIDE Σ, and renders with its source tag; header stat == section total.
+    assert.equal(vm.grammarGroups.length, 1);
+    const derived = vm.grammarGroups[0].items[0];
+    assert.equal(derived.id, "g-d1");
+    assert.equal(derived.derived, true);
+    assert.equal(derived.correctionId, null);
+    assert.equal(derived.said, derivedSaid, "the LLM's case-flipped span is kept verbatim");
+    assert.equal(vm.integrity.derivedGrammar, 1);
+    assert.equal(vm.stats.corrections, 1);
+    assert.ok(html.includes('<i class="src">transcript</i>'), "derived row tagged on the page");
+    assert.ok(html.includes(esc(derivedSaid)), "the derived said reached the page");
+    assert.ok(html.includes(`<div class="n">1</div><div class="l">corrections</div>`), "header stat counts the derived row");
+    assert.match(html, /1 grammar fix — 1 spotted in your transcript, grouped into 1 habit/);
+
+    // ── v2: titles stand in for the generic "Pro Lesson" topics; tutors (when known) on cards.
+    for (const c of vm.classes) {
+      if (["", "pro lesson", "kickoff conversation", "conversation"].includes(c.topic.trim().toLowerCase())) {
+        assert.match(c.title, /^Real class \d about work$/);
+        assert.ok(html.includes(esc(c.title)), "the title is on the card");
+      } else {
+        assert.equal(c.title, null);
+      }
+      if (c.tutor) assert.ok(html.includes(`· with ${esc(c.tutor)}</span>`));
+    }
+
+    // ── v2: review · level · plan composed, guarded and rendered — eight sections in order.
+    assert.equal(vm.review.wentWell[0].quote, anchorLine, "a real any-side quote survives");
+    assert.equal(vm.review.needsWork[0].quote, derivedSaid, "a real student-side quote survives (case-insensitive)");
+    assert.equal(vm.level.overall, "B1+");
+    assert.equal(vm.level.bandIndex, 3);
+    assert.equal(vm.level.dimensions.length, 5);
+    assert.equal(vm.plan.items.length, 2);
+    assert.ok(/^[A-Z][a-z]{2} \d/.test(vm.plan.weekLabel), `plan.weekLabel looks like a week label: ${vm.plan.weekLabel}`);
+    const ids = [...html.matchAll(/<section id="(m-[a-z]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(ids, ["m-review", "m-level", "m-classes", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-plan"]);
+    assert.deepEqual([...html.matchAll(/<span class="num">(\d\d)<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "07", "08"]);
+    assert.match(html, /<span class="lvbig">B1\+<\/span>/);
+    assert.ok(html.includes(`Plan for the week of ${esc(vm.plan.weekLabel)}</h2>`));
     const pqCards = (html.match(/<button class="pq" aria-expanded="false" aria-controls="pa\d+">/g) || []).length;
     assert.ok(pqCards >= 1, `≥1 tap-to-reveal card in HTML (got ${pqCards})`);
     assert.ok(html.includes("querySelectorAll('.pq')"), "reveal script shipped (practice present)");

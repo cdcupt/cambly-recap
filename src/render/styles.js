@@ -61,6 +61,9 @@ export const STYLES = `
 .mk .focus>:last-child{margin-bottom:0}
 .mk .focus .fhead{font-size:.62rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--teal);margin-bottom:6px}
 .mk .focus .fai{font-size:.82rem;color:var(--ink-soft);margin:0 0 7px}
+/* Cambly's "what we can work on" — coaching prose (worksheets stripped), accent-edged like a note. */
+.mk .focus .fwork{font-size:.82rem;color:var(--ink-soft);margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--acc);background:var(--surface);border-radius:0 8px 8px 0}
+.mk .focus .fwork b{display:block;font-size:.6rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:2px}
 .mk .focus .fnote{margin:0 0 8px}
 .mk .focus .fnote .en{font-size:.82rem;color:var(--mink);margin:0}
 .mk .focus .fnote .zh{font-size:.8rem;color:var(--mmuted);margin:2px 0 0}
@@ -72,6 +75,8 @@ export const STYLES = `
 .mk .vword .w b{font-family:var(--disp);font-size:1rem;color:var(--acc-ink)}
 .mk .vword .w em{font-style:normal;font-size:.8rem;color:var(--ink-soft)}
 .mk .vq{font-size:.8rem;color:var(--mmuted);font-style:italic;margin:4px 0 0}
+/* Model sentence shown only when no clean verbatim usage survived (never both). */
+.mk .veg{font-size:.8rem;color:var(--mmuted);margin:4px 0 0}
 .mk .daychip{font-style:normal;font-size:.62rem;font-weight:800;letter-spacing:.06em;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:2px 7px;vertical-align:middle}
 .mk .grp{margin:14px 0 6px}
 .mk .grp h3{font-size:.9rem;margin:0 0 2px;display:flex;align-items:center;gap:7px}
@@ -82,6 +87,8 @@ export const STYLES = `
 .mk .corr .fix{color:var(--good-ink);font-weight:600}
 .mk .corr .why{display:block;font-size:.76rem;color:var(--mmuted);margin-top:3px}
 .mk .corr .arr{color:var(--mmuted)}
+/* Source tag on a row the recap spotted in the transcript (not a Cambly correction record). */
+.mk .corr .src{font-style:normal;font-size:.58rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:1px 6px;margin-left:6px;vertical-align:middle;white-space:nowrap}
 .mk details.more>summary{cursor:pointer;list-style:none;display:inline-block;font-size:.74rem;font-weight:700;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:6px 12px;margin:4px 0;min-height:30px}
 .mk details.more>summary::-webkit-details-marker{display:none}
 .mk details.more>summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
@@ -149,7 +156,7 @@ body.mk{max-width:760px;margin:0 auto;min-height:100vh;box-shadow:0 0 40px rgba(
 main{display:block}
 /* Defensive wrap: no long unbroken token (URL, pasted greeting, code) may force
    horizontal scroll at 320px. Every text-bearing container breaks long words. */
-.mk .sub,.mk .ccard .day span,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl span{overflow-wrap:anywhere;word-break:break-word}
+.mk .sub,.mk .ccard .day span,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fwork,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .veg,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl span{overflow-wrap:anywhere;word-break:break-word}
 /* Flex text cells must be allowed to shrink below their content width to wrap. */
 .mk .ccard .day,.mk .vword .w,.mk .grp h3,.mk .focus .fnext{min-width:0}
 .mk a:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}

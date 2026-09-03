@@ -15,8 +15,10 @@ import {
   MAX_JS_BYTES,
 } from "../src/render/validate.js";
 import { STYLES } from "../src/render/styles.js";
+import { SECTION_STYLES } from "../src/render/sections.js";
+import { CHART_STYLES } from "../src/render/chart.js";
 import { REVEAL } from "../src/render/script.js";
-import { goldenWeek, emptyWeek } from "./render-fixtures.js";
+import { goldenWeek, goldenWeekV2, emptyWeek } from "./render-fixtures.js";
 
 test("validateWeek + assertSigma: the golden week passes both gates", () => {
   const vm = goldenWeek();
@@ -25,6 +27,24 @@ test("validateWeek + assertSigma: the golden week passes both gates", () => {
   assert.deepEqual(facts, {
     reported: 4,
     renderedGrammar: 2,
+    anchoredGrammar: 2,
+    derivedGrammar: 0,
+    renderedVocab: 1,
+    renderedPhrasing: 1,
+    sum: 4,
+  });
+});
+
+test("validateWeek + assertSigma: the v2 golden week (review · level · plan · derived row) passes both gates", () => {
+  const vm = goldenWeekV2();
+  assert.doesNotThrow(() => validateWeek(vm));
+  const facts = assertSigma(vm);
+  // Σ counts only anchored rows; the section total (and stats.corrections) counts every row.
+  assert.deepEqual(facts, {
+    reported: 4,
+    renderedGrammar: 3,
+    anchoredGrammar: 2,
+    derivedGrammar: 1,
     renderedVocab: 1,
     renderedPhrasing: 1,
     sum: 4,
@@ -49,10 +69,32 @@ test("U-RN-⑩ doctored integrity{} mismatch aborts (Σ re-assert)", () => {
   assert.throws(() => assertSigma(vm), /doctored integrity/);
 });
 
+test("U-RN-⑩ a doctored derivedGrammar count aborts; an integrity block without it (older VM) is tolerated", () => {
+  const doctored = goldenWeekV2({
+    integrity: { reportedCorrections: 4, renderedGrammar: 3, derivedGrammar: 0, renderedVocab: 1, renderedPhrasing: 1, rejectedCount: 0 },
+  });
+  assert.throws(() => assertSigma(doctored), /doctored integrity/);
+  const older = goldenWeekV2({
+    integrity: { reportedCorrections: 4, renderedGrammar: 3, renderedVocab: 1, renderedPhrasing: 1, rejectedCount: 0 },
+  });
+  assert.doesNotThrow(() => assertSigma(older));
+});
+
 test("assertSigma: stats.corrections not equal to the grammar-section total aborts", () => {
   // stats.corrections is the user-facing header/badge count and must equal renderedGrammar.
   const vm = goldenWeek({ stats: { classes: 2, minutes: 90, corrections: 9, expressions: 2 } });
   assert.throws(() => assertSigma(vm), /Σ mismatch/);
+});
+
+test("assertSigma: stats.corrections must count derived rows too (header == section total), while Σ excludes them", () => {
+  // Counting only the anchored rows in the header would disagree with the Grammar section.
+  const anchoredOnly = goldenWeekV2({ stats: { classes: 2, minutes: 90, corrections: 2, expressions: 3 } });
+  assert.throws(() => assertSigma(anchoredOnly), /stats\.corrections=2 ≠ rendered grammar 3/);
+  // Counting the derived row inside Σ would over-report Cambly's records.
+  const inflated = goldenWeekV2({
+    integrity: { reportedCorrections: 5, renderedGrammar: 3, derivedGrammar: 1, renderedVocab: 1, renderedPhrasing: 1, rejectedCount: 0 },
+  });
+  assert.throws(() => assertSigma(inflated), /reportedCorrections=5 ≠ anchored grammar 2/);
 });
 
 test("assertSigma: only non-null fromCorrectionId vocab/phrasing count toward Σ", () => {
@@ -107,6 +149,93 @@ test("validateWeek: an invalid practice format or quoteBy enum aborts", () => {
   assert.throws(() => validateWeek(badQuoteBy), /quoteBy invalid/);
 });
 
+// ── v2 grammar rule: correctionId null ⇔ derived:true ───────────────────────────────
+
+test("validateWeek grammar: correctionId may be null only on a derived:true item; derived:true may not carry an id", () => {
+  const nullNoDerived = goldenWeekV2();
+  nullNoDerived.grammarGroups[1].items[0] = { ...nullNoDerived.grammarGroups[1].items[0], derived: false };
+  assert.throws(() => validateWeek(nullNoDerived), /correctionId required \(only a derived:true item/);
+
+  const legacyShapeNull = goldenWeek();
+  legacyShapeNull.grammarGroups[0].items[0].correctionId = null; // no `derived` key at all
+  assert.throws(() => validateWeek(legacyShapeNull), /correctionId required/);
+
+  const derivedWithId = goldenWeekV2();
+  derivedWithId.grammarGroups[1].items[0] = { ...derivedWithId.grammarGroups[1].items[0], correctionId: "c9" };
+  assert.throws(() => validateWeek(derivedWithId), /derived:true item must not carry a correctionId/);
+
+  const blankSaid = goldenWeekV2();
+  blankSaid.grammarGroups[1].items[0] = { ...blankSaid.grammarGroups[1].items[0], said: " " };
+  assert.throws(() => validateWeek(blankSaid), /said empty/);
+});
+
+// ── v2 optional blocks: absent is fine; present must be well-shaped ─────────────────
+
+test("validateWeek: classes[].title may be absent, null, or a non-empty string — never blank", () => {
+  assert.doesNotThrow(() => validateWeek(goldenWeekV2()));
+  const blank = goldenWeekV2();
+  blank.classes[0].title = "  ";
+  assert.throws(() => validateWeek(blank), /title must be null or a non-empty string/);
+});
+
+test("validateWeek review: absent passes; empty summary, blank point/issue/fix, or a whitespace quote aborts", () => {
+  const withNull = goldenWeekV2({ review: null });
+  assert.doesNotThrow(() => validateWeek(withNull));
+  const noSummary = goldenWeekV2({ review: { ...goldenWeekV2().review, summary: "" } });
+  assert.throws(() => validateWeek(noSummary), /review\.summary empty/);
+  const blankPoint = goldenWeekV2();
+  blankPoint.review.wentWell[0].point = " ";
+  assert.throws(() => validateWeek(blankPoint), /wentWell\[0\]\.point empty/);
+  const blankFix = goldenWeekV2();
+  blankFix.review.needsWork[0].fix = "";
+  assert.throws(() => validateWeek(blankFix), /needsWork\[0\]\.fix empty/);
+  const wsQuote = goldenWeekV2();
+  wsQuote.review.needsWork[0].quote = "   ";
+  assert.throws(() => validateWeek(wsQuote), /needsWork\[0\]\.quote empty \(▣\)/);
+  const notArrays = goldenWeekV2({ review: { summary: "s", wentWell: "x", needsWork: [] } });
+  assert.throws(() => validateWeek(notArrays), /wentWell\/needsWork must be arrays/);
+});
+
+test("validateWeek level: bad band / confidence enums, wrong bandIndex, wrong dimension count or order, >3 advice all abort", () => {
+  const set = (mut) => {
+    const vm = goldenWeekV2();
+    mut(vm.level);
+    return vm;
+  };
+  assert.throws(() => validateWeek(set((l) => (l.overall = "Z9"))), /level\.overall invalid band/);
+  assert.throws(() => validateWeek(set((l) => (l.bandIndex = 2))), /bandIndex does not match overall/);
+  assert.throws(() => validateWeek(set((l) => (l.confidence = "certain"))), /confidence invalid/);
+  assert.throws(() => validateWeek(set((l) => l.dimensions.pop())), /exactly the 5 canonical dimensions/);
+  assert.throws(() => validateWeek(set((l) => l.dimensions.reverse())), /dimensions\[0\]\.name must be "range"/);
+  assert.throws(() => validateWeek(set((l) => (l.dimensions[2].band = "B9"))), /dimensions\[2\]\.band invalid band/);
+  assert.throws(() => validateWeek(set((l) => (l.dimensions[2].bandIndex = 0))), /dimensions\[2\]\.bandIndex does not match/);
+  assert.throws(() => validateWeek(set((l) => (l.dimensions[2].evidence = null))), /evidence must be a string/);
+  assert.throws(() => validateWeek(set((l) => (l.summary = " "))), /level\.summary empty/);
+  assert.throws(() => validateWeek(set((l) => l.advice.push({ title: "D", detail: "d" }))), /advice must be an array of at most 3/);
+  assert.throws(() => validateWeek(set((l) => (l.advice[0].detail = ""))), /advice\[0\]\.detail empty/);
+  // Zero advice is allowed (the builder never pads); empty evidence is allowed (an inherited dimension).
+  assert.doesNotThrow(() => validateWeek(set((l) => (l.advice = []))));
+  assert.doesNotThrow(() => validateWeek(set((l) => (l.dimensions[4].evidence = ""))));
+});
+
+test("validateWeek plan: empty weekLabel/focus, no items, a bad day, a blank task, a non-string why or a blank ask all abort", () => {
+  const set = (mut) => {
+    const vm = goldenWeekV2();
+    mut(vm.plan);
+    return vm;
+  };
+  assert.throws(() => validateWeek(set((p) => (p.weekLabel = ""))), /plan\.weekLabel empty/);
+  assert.throws(() => validateWeek(set((p) => (p.focus = " "))), /plan\.focus empty/);
+  assert.throws(() => validateWeek(set((p) => (p.items = []))), /items must be a non-empty array/);
+  assert.throws(() => validateWeek(set((p) => (p.items[0].day = "Funday"))), /items\[0\]\.day invalid/);
+  assert.throws(() => validateWeek(set((p) => (p.items[1].task = ""))), /items\[1\]\.task empty/);
+  assert.throws(() => validateWeek(set((p) => (p.items[1].why = null))), /items\[1\]\.why must be a string/);
+  assert.throws(() => validateWeek(set((p) => p.askTutor.push(" "))), /askTutor\[2\] empty/);
+  assert.doesNotThrow(() => validateWeek(set((p) => (p.askTutor = []))));
+});
+
+// ── budgets ──────────────────────────────────────────────────────────────────────
+
 test("U-RN-⑬ budget: a page ≥ 200 KB aborts", () => {
   const huge = "x".repeat(MAX_PAGE_BYTES + 1);
   assert.throws(() => assertBudget(huge, "big"), /budget/);
@@ -137,8 +266,10 @@ test("budget: escaped user content containing a pasted URL does NOT trip the ext
   assert.throws(() => assertBudget('<img src="https://cdn.example/x.png">'), /external resource/);
 });
 
-test("F6 budget: inline CSS ≤ 15 KB and inline JS ≤ 2 KB", () => {
-  assert.ok(Buffer.byteLength(STYLES, "utf8") <= MAX_CSS_BYTES, "CSS within 15 KB");
+test("F6 budget: the whole inline CSS (STYLES + SECTION_STYLES + CHART_STYLES) ≤ 28 KB and inline JS ≤ 2 KB", () => {
+  assert.equal(MAX_CSS_BYTES, 28 * 1024);
+  const css = STYLES + SECTION_STYLES + CHART_STYLES;
+  assert.ok(Buffer.byteLength(css, "utf8") <= MAX_CSS_BYTES, `CSS within 28 KB (got ${Buffer.byteLength(css, "utf8")})`);
   assert.ok(Buffer.byteLength(REVEAL, "utf8") <= MAX_JS_BYTES, "reveal JS within 2 KB");
 });
 
