@@ -13,6 +13,7 @@ import {
   weekSeries,
   avgStat,
   deltaLabel,
+  deltaParts,
   CHART_STYLES,
 } from "../src/render/chart.js";
 import { weekWith, emptyWeek } from "./render-fixtures.js";
@@ -167,11 +168,40 @@ test("progressBlock: four tiles, each with one well-formed inline SVG and a <tit
 
 test("progressBlock: latest value + unit and the neutral delta chip per tile", () => {
   const html = progressBlock(threeWeeks());
-  assert.ok(html.includes(`<p class="tv"><b>84</b><span class="tu">wpm</span></p><p class="td">+12 wpm since May 4–10</p>`));
-  assert.ok(html.includes(`<p class="tv"><b>41</b><span class="tu">%</span></p><p class="td">−4% since May 4–10</p>`));
-  assert.ok(html.includes(`<p class="tv"><b>400</b></p><p class="td">No change since May 4–10</p>`), "words: no unit on the value");
-  assert.ok(html.includes(`<p class="tv"><b>300</b><span class="tu">min</span></p><p class="td">+210 min since May 4–10</p>`));
+  const chip = (value) => `<p class="delta"><span class="td">${value}</span><span class="tds">since May 4–10</span></p>`;
+  assert.ok(html.includes(`<p class="tv"><b>84</b><span class="tu">wpm</span></p>${chip("+12 wpm")}`));
+  assert.ok(html.includes(`<p class="tv"><b>41</b><span class="tu">%</span></p>${chip("−4%")}`));
+  assert.ok(html.includes(`<p class="tv"><b>400</b></p>${chip("No change")}`), "words: no unit on the value");
+  assert.ok(html.includes(`<p class="tv"><b>300</b><span class="tu">min</span></p>${chip("+210 min")}`));
   assert.ok(!/class="td"[^>]*>[^<]*(good|bad|up|down)/i.test(html), "no judgement wording in the chip");
+});
+
+test("regression (visual): the delta pill never wraps — 'since <week>' is a separate muted tail, and the pill is nowrap", () => {
+  const s = weekSeries(threeWeeks());
+  assert.deepEqual(deltaParts(s, "wpm"), { value: "+12 wpm", since: "since May 4–10" });
+  assert.deepEqual(deltaParts(s, "talkPct"), { value: "−4%", since: "since May 4–10" });
+  assert.deepEqual(deltaParts(s, "words"), { value: "No change", since: "since May 4–10" });
+  assert.equal(deltaParts(weekSeries(threeWeeks().slice(0, 1)), "wpm"), null);
+  assert.equal(deltaLabel(s, "wpm"), "+12 wpm since May 4–10", "the one-sentence form is the two parts joined");
+  // Markup: the pill (.td) holds only the signed value; the week lives in .tds outside the pill.
+  const html = progressBlock(threeWeeks());
+  assert.equal(count(html, /<span class="td">[^<]*<\/span>/g), 4);
+  assert.ok(!/<span class="td">[^<]*since/.test(html), "no 'since' inside a pill");
+  assert.equal(count(html, /<span class="tds">since May 4–10<\/span>/g), 4);
+  // CSS: the pill cannot break inside; the tail cannot break inside its date; the row wraps between them.
+  const td = /\.ix \.td\{([^}]*)\}/.exec(CHART_STYLES)[1];
+  assert.match(td, /white-space:nowrap/);
+  assert.ok(!/overflow-wrap|max-width/.test(td), "the pill no longer relies on wrapping");
+  assert.match(CHART_STYLES, /\.ix \.tds\{[^}]*white-space:nowrap/);
+  assert.match(CHART_STYLES, /\.ix \.delta\{display:flex;flex-wrap:wrap/);
+  // The week label is escaped inside the tail too.
+  const xss = progressBlock([weekWith("2026-05-04", '<b>x</b>', 1), weekWith("2026-05-11", "May 11–17", 1)]);
+  assert.ok(xss.includes('<span class="tds">since &lt;b&gt;x&lt;/b&gt;</span>'));
+});
+
+test("'Show the data' summary meets the 44px tap target", () => {
+  // `.ix details.ptable>summary` ties the specificity of the base `.mk details.more>summary` rule and wins by order.
+  assert.match(CHART_STYLES, /\.ix details\.ptable>summary\{[^}]*box-sizing:border-box;min-height:44px/);
 });
 
 test("progressBlock: line tiles draw one 2px teal polyline per run, an accent end marker on a surface ring, and first/last labels only", () => {

@@ -11,9 +11,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-import { weekWindow, MS_DAY } from "../src/week.js";
-import { runRebuild, runRender, patchTutorNames, parseArgs } from "../src/run.js";
+import { weekWindow, MS_DAY, targetWeekId } from "../src/week.js";
+import { runRebuild, runRender, patchTutorNames, parseArgs, UsageError, USAGE } from "../src/run.js";
 
 const FIXDIR = path.join(import.meta.dirname, "fixtures", "synthetic", "lesson-basic");
 const readFix = (f) => JSON.parse(fs.readFileSync(path.join(FIXDIR, f), "utf8"));
@@ -223,6 +224,75 @@ test("runRebuild refuses to overwrite a non-empty VM when its week has no comple
   assert.equal(fs.existsSync(path.join(dirs.siteDir, "index.html")), false, "no render on failure");
 });
 
+test("regression: --rebuild rejects a weekId that is not a real calendar date instead of rolling it into a future week", async () => {
+  const dirs = seed();
+  const s = seams();
+  const logs = [];
+
+  const r = await rebuild(dirs, s, { weekIds: ["2026-13-99"], log: (m) => logs.push(m) });
+
+  assert.equal(r.outcome, "fetch-failed");
+  assert.equal(r.exitCode, 2);
+  assert.match(lastRun(dirs.dataDir).error, /invalid weekId "2026-13-99"/);
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks")), false, "no stub written for any week");
+  assert.equal(fs.existsSync(dirs.siteDir), false, "no render");
+  assert.equal(s.calls.summarize.length, 0);
+  assert.ok(!logs.some((m) => /not a Monday/.test(m)), "never 'snapped' to 2027");
+  for (const bad of ["2026-02-30", "2026-00-10", "2026-04-31"]) {
+    assert.equal((await rebuild(dirs, s, { weekIds: [bad] })).exitCode, 2, bad);
+  }
+  // A real non-Monday date still snaps to its week (unchanged behaviour).
+  assert.equal((await rebuild(dirs, s, { weekIds: [WEEK.startDate.replace(/\d{2}$/, (d) => String(Number(d) + 3).padStart(2, "0"))] })).exitCode, 0);
+});
+
+test("regression: --rebuild refuses a week that has not ended yet (no 'no classes' stub for the current or a future week)", async () => {
+  const dirs = seed();
+  const s = seams();
+  const target = targetWeekId(NOW);
+  const inProgress = weekWindow(NOW).weekId;
+  const future = weekWindow(NOW + 40 * 7 * MS_DAY).weekId;
+  assert.ok(inProgress > target && future > inProgress);
+
+  for (const w of [inProgress, future]) {
+    const r = await rebuild(dirs, s, { weekIds: [w], mail: true });
+    assert.equal(r.exitCode, 2, w);
+    assert.match(lastRun(dirs.dataDir).error, new RegExp(`week ${w} has not ended yet \\(the latest complete week is ${target}\\)`));
+    assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks", `${w}.json`)), false, "no stub");
+  }
+  assert.equal(fs.existsSync(dirs.siteDir), false, "no render, so the index/healthz never see the bogus week");
+  assert.deepEqual(s.calls.mails, []);
+  // A mixed list fails as a whole before any week is touched.
+  const mixed = await rebuild(dirs, s, { weekIds: [WEEK.weekId, future] });
+  assert.equal(mixed.exitCode, 2);
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks", `${WEEK.weekId}.json`)), false);
+  assert.equal(s.calls.summarize.length, 0);
+  // The latest complete week itself is fine.
+  assert.equal((await rebuild(dirs, s, { weekIds: [target] })).exitCode, 0);
+});
+
+test("regression: a NEW empty stub is refused before FIRST_WEEK and logged loudly inside the range", async () => {
+  const dirs = seed();
+  const s = seams();
+  const prev = process.env.FIRST_WEEK;
+  process.env.FIRST_WEEK = WEEK.weekId;
+  try {
+    const r = await rebuild(dirs, s, { weekIds: [PREV_WEEK.weekId], mail: true });
+    assert.equal(r.exitCode, 2);
+    assert.match(lastRun(dirs.dataDir).error, /no raw lessons, no VM, and lies before FIRST_WEEK/);
+    assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks", `${PREV_WEEK.weekId}.json`)), false);
+    assert.deepEqual(s.calls.mails, []);
+    // Inside the range the stub is legitimate (what the cron's self-heal would write) — but it is announced.
+    const logs = [];
+    const next = weekWindow(WEEK.startMs + 7 * MS_DAY).weekId; // the latest complete week as of NOW
+    const ok = await rebuild(dirs, s, { weekIds: [next], log: (m) => logs.push(m) });
+    assert.equal(ok.outcome, "no-classes");
+    assert.ok(logs.some((m) => m.includes(`rebuild ${next}: no raw lessons and no prior VM — writing an empty "no classes" stub`)), logs.join("\n"));
+  } finally {
+    if (prev === undefined) delete process.env.FIRST_WEEK;
+    else process.env.FIRST_WEEK = prev;
+  }
+});
+
 test("runRebuild rejects an invalid or missing weekId list with exit 2", async () => {
   const dirs = seed();
   const s = seams();
@@ -376,4 +446,48 @@ test("parseArgs reads --rebuild=<ids> (comma list), --render and --mail alongsid
     rebuild: null,
   });
   assert.deepEqual(parseArgs(["--rebuild="]).rebuild, [], "an empty list is passed through for runRebuild to reject");
+  assert.deepEqual(parseArgs(["--rebuild=2026-08-24", "--rebuild=2026-08-17"]).rebuild, ["2026-08-24", "2026-08-17"], "repeated flags concatenate");
+  assert.deepEqual(parseArgs([]).rebuild, null);
+});
+
+test("regression: parseArgs is strict — a near-miss offline flag or any unknown token is a UsageError, never a silent online run", () => {
+  for (const argv of [
+    ["--rebuild", "2026-08-24"], // space instead of '='
+    ["--rebuild"],
+    ["--render=2026-08-24"],
+    ["--rebuild:2026-08-24"],
+    ["--Render"],
+    ["--bogus"],
+    ["2026-08-24"],
+    ["--render", "--verbose"],
+    ["--mail", "--rebuild", "2026-08-24"],
+  ]) {
+    assert.throws(() => parseArgs(argv), (e) => e instanceof UsageError && e.exitCode === 2 && /unrecognised argument/.test(e.message) && e.message.includes(USAGE), argv.join(" "));
+  }
+  assert.match(USAGE, /--rebuild=<weekId>\[,<weekId>…\] \[--mail\]/);
+  assert.match(USAGE, /--render/);
+});
+
+test("regression (CLI): `node src/run.js --rebuild 2026-08-24` exits 2 with the usage line and performs zero side effects", () => {
+  const dirs = seed();
+  const run = path.join(import.meta.dirname, "..", "src", "run.js");
+  const env = {
+    ...process.env,
+    DATA_DIR: dirs.dataDir,
+    SITE_DIR: dirs.siteDir,
+    CAMBLY_BASE_URL: "http://127.0.0.1:9",
+    OPENAI_BASE_URL: "http://127.0.0.1:9",
+    RESEND_BASE_URL: "http://127.0.0.1:9",
+    CAMBLY_STATE_PATH: "/nonexistent",
+  };
+  for (const argv of [["--rebuild", "2026-08-24"], ["--render=2026-08-24"], ["--rebuild"]]) {
+    const res = spawnSync(process.execPath, [run, ...argv], { env, encoding: "utf8", timeout: 20_000 });
+    assert.equal(res.status, 2, `${argv.join(" ")} → ${res.stderr}`);
+    assert.match(res.stderr, /unrecognised argument/);
+    assert.match(res.stderr, /usage: node src\/run\.js/);
+    assert.ok(!/outcome=/.test(res.stderr), "no run happened");
+  }
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "site-state.json")), false, "site-state.json never written");
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "runs.ndjson")), false, "no runs.ndjson entry");
+  assert.equal(fs.existsSync(dirs.siteDir), false, "no render");
 });

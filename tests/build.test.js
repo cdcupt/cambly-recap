@@ -84,6 +84,18 @@ const corpusLesson = mkLesson({
   tutorNotes: ["Great energy today!"],
 });
 
+test("quoteCorpus holds only transcript/segments + chat + tutor notes — never the Cambly coach notes the bundle prints", () => {
+  const coach = "Reading aloud was the focus this lesson, and the article came through with real fluency and confidence.";
+  const l = mkLesson({
+    transcript: [{ text: "I read the article.", speaker: "student" }],
+    aiTutorFeedback: { finalAIFeedback: { whatYouDidWell: coach, whatWeCanWorkOn: "Articles.", ideasForPractice: "Retell it." }, finalSuggestedNextLesson: "Small talk" },
+  });
+  const corpus = quoteCorpus(l);
+  assert.deepEqual(corpus.any, ["I read the article."]);
+  assert.equal(quoteMatches(coach, corpus, "any"), false, "a coach-line quote is a guard miss (nulled), by design");
+  assert.equal(quoteMatches("Small talk", corpus, "tutor"), false);
+});
+
 test("U-QG① an exact substring on the right side is accepted", () => {
   assert.equal(quoteMatches("like coffee", quoteCorpus(corpusLesson), "student"), true);
 });

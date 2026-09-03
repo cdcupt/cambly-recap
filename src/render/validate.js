@@ -249,6 +249,17 @@ export function assertSigma(vm) {
   ).length;
   const sum = anchoredGrammar + renderedVocab + renderedPhrasing;
 
+  // Place-once: a correction id may appear in exactly one row across grammar + vocab +
+  // phrasing. A doctored VM that repeats an id keeps the counts consistent, so the
+  // arithmetic below cannot catch it — the ids themselves must be unique.
+  const placed = [
+    ...items.map((it) => it && it.correctionId).filter((id) => id !== null && id !== undefined),
+    ...(vm.vocabulary || []).map((v) => v.fromCorrectionId).filter((id) => id !== null && id !== undefined),
+    ...(vm.phrasing || []).map((p) => p.fromCorrectionId).filter((id) => id !== null && id !== undefined),
+  ];
+  const dup = placed.find((id, i) => placed.indexOf(id) !== i);
+  if (dup !== undefined) fail(`week ${vm.weekId}: Σ mismatch — correction id ${JSON.stringify(dup)} is placed more than once`);
+
   // (a) The header/badge count must equal the Grammar section it labels.
   const statsCorr = vm.stats ? vm.stats.corrections ?? 0 : 0;
   if (statsCorr !== renderedGrammar) {

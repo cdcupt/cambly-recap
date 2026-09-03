@@ -69,6 +69,32 @@ test("U-RN-⑩ doctored integrity{} mismatch aborts (Σ re-assert)", () => {
   assert.throws(() => assertSigma(vm), /doctored integrity/);
 });
 
+test("U-RN-⑩ a correction id placed twice aborts even when every integrity count is consistent", () => {
+  // Same id in two grammar rows (counts unchanged: anchored 3, reported 4).
+  const vm = goldenWeek();
+  const [g0] = vm.grammarGroups;
+  assert.ok(g0.items.length >= 2, "fixture has two anchored rows in one group");
+  const twice = {
+    ...vm,
+    grammarGroups: [{ ...g0, items: g0.items.map((it, i) => (i === 1 ? { ...it, correctionId: g0.items[0].correctionId } : it)) }, ...vm.grammarGroups.slice(1)],
+  };
+  assert.throws(() => assertSigma(twice), /placed more than once/);
+  // Same id as a grammar row AND a vocabulary fromCorrectionId, with the integrity block "made consistent".
+  const cid = g0.items[0].correctionId;
+  const cross = {
+    ...vm,
+    vocabulary: [{ ...vm.vocabulary[0], fromCorrectionId: cid }, ...vm.vocabulary.slice(1)],
+  };
+  const vocabIds = cross.vocabulary.filter((v) => v.fromCorrectionId != null).length;
+  const anchored = cross.grammarGroups.flatMap((g) => g.items).filter((it) => it.correctionId != null).length;
+  const phr = cross.phrasing.filter((p) => p.fromCorrectionId != null).length;
+  cross.integrity = { ...vm.integrity, reportedCorrections: anchored + vocabIds + phr, renderedVocab: vocabIds };
+  assert.throws(() => assertSigma(cross), /placed more than once/);
+  // The untouched fixtures still pass.
+  assert.doesNotThrow(() => assertSigma(goldenWeek()));
+  assert.doesNotThrow(() => assertSigma(goldenWeekV2()));
+});
+
 test("U-RN-⑩ a doctored derivedGrammar count aborts; an integrity block without it (older VM) is tolerated", () => {
   const doctored = goldenWeekV2({
     integrity: { reportedCorrections: 4, renderedGrammar: 3, derivedGrammar: 0, renderedVocab: 1, renderedPhrasing: 1, rejectedCount: 0 },

@@ -18,6 +18,7 @@ import {
   OpenAIError,
   SchemaInvalidError,
   RULES,
+  correctiveMessage,
 } from "../src/summarize.js";
 import { BANDS, LEVEL_DIMENSIONS, CONFIDENCE_LEVELS, PLAN_DAYS } from "../src/coach.js";
 
@@ -187,6 +188,18 @@ test("the system RULES prompt states the verbatim-quote and place-once contracts
   assert.match(RULES, /human-readable title/);
   // beta finding 5: the vocab example quote must actually contain the term (a real usage).
   assert.match(RULES, /actually CONTAINS the term/);
+});
+
+test("regression: RULES name the quotable lines (Transcript · Chat · Tutor notes) and exclude the Cambly coach notes the bundle prints", () => {
+  // The bundle prints "Cambly coach — …" lines, but build.js quoteCorpus() never holds them: a quote copied
+  // from one is always nulled and counts toward the re-prompt ratio. The prompt must say so.
+  assert.match(RULES, /QUOTABLE lines are ONLY the Transcript, Chat\s+and Tutor notes lines of each class/);
+  assert.match(RULES, /"Cambly coach —"\s+notes and the "Tutor's suggested next lesson" line are evidence to draw on and\s+paraphrase, never to quote/);
+  assert.match(RULES, /paraphrase them; they are not quotable lines \(rule 1\)/, "rule 9 points back to the quotable-lines rule");
+  assert.ok(!/supplied transcripts, chat, or feedback/.test(RULES), "the ambiguous 'or feedback' wording is gone");
+  const fix = correctiveMessage([{ section: "review", quoteBy: "tutor", quote: "Reading aloud was the focus this lesson." }]);
+  assert.match(fix, /copy an exact Transcript, Chat or\s+Tutor notes line/);
+  assert.match(fix, /never quote the Cambly coach notes or the correction records/);
 });
 
 test("the system RULES prompt carries the v2 rules 6–12 (transcript grammar, phrasing cap, example, review, CEFR level, plan, titles)", () => {

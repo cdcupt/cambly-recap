@@ -71,6 +71,12 @@ node src/run.js --rebuild=2026-08-24,2026-08-31   # re-summarize the named weeks
 node src/run.js --rebuild=2026-08-24 --mail       # …and also send the 📗/📭 email for each rebuilt week (off by default)
 ```
 
+Flags are strict: a near-miss such as `--rebuild 2026-08-24` (space instead of `=`),
+`--render=…` or any unknown token exits 2 with a usage line — it never falls through to
+the online cron run. `--rebuild` ids must be real calendar dates (snapped to their Monday)
+of weeks that have already ended; a week with neither raw lessons nor a VM is only turned
+into a "no classes" stub inside the `FIRST_WEEK` … latest-complete-week range.
+
 Tutor names live in `data/tutors.json` — a flat `{ "<tutorId>": { "id", "displayName" } }`
 map that every online run merges into (it never shrinks). Every mode first fills in
 classes whose tutor name was lost from that map, so seeding the file and running

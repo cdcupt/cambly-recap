@@ -162,7 +162,7 @@ test(
     assert.ok(!html.includes(`<div class="n">0</div><div class="l">minutes</div>`), "NOT the minutes=0 regression");
     for (const c of vm.classes) {
       assert.ok(c.minutes > 0, `class ${c.lessonId} minutes > 0`);
-      assert.ok(html.includes(`>${c.minutes} min `), `class card shows ${c.minutes} min`);
+      assert.match(html, new RegExp(`<span>${c.minutes} min( · with |</span>)`), `class card eyebrow shows ${c.minutes} min`);
     }
 
     // ── Bug 2: a non-empty practice section with ≥1 tap-to-reveal card + reveal script,

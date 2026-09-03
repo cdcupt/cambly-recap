@@ -49,8 +49,10 @@ export const STYLES = `
 .mk .empty-note{color:var(--mmuted);font-size:.85rem;font-style:italic;margin:6px 0 10px}
 .mk .ccard{background:var(--surface);border:1px solid var(--mline-soft);border-radius:14px;padding:14px 15px 12px;margin:10px 0;box-shadow:0 1px 2px rgba(27,24,19,.05),0 6px 20px rgba(27,24,19,.06)}
 .mk .ccard .day{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.mk .ccard .day b{font-family:var(--disp);font-size:1.02rem}
+.mk .ccard .day b{font-size:.78rem;font-weight:700;color:var(--ink-soft);letter-spacing:.01em}
 .mk .ccard .day span{font-size:.72rem;color:var(--mmuted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.mk .ccard .ctitle{font-family:var(--disp);font-weight:600;font-size:1.08rem;line-height:1.3;letter-spacing:-.005em;color:var(--mink);margin:3px 0 0}
+.mk .ccard.nohead .day b{font-family:var(--disp);font-size:1.02rem;font-weight:600;color:var(--mink);letter-spacing:0}
 .mk .ccard .cstats{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}
 .mk .ccard .cstats i{font-style:normal;font-size:.7rem;font-weight:700;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:2px 8px}
 .mk .moment{font-size:.85rem;color:var(--ink-soft);margin:6px 0 0}
@@ -156,7 +158,7 @@ body.mk{max-width:760px;margin:0 auto;min-height:100vh;box-shadow:0 0 40px rgba(
 main{display:block}
 /* Defensive wrap: no long unbroken token (URL, pasted greeting, code) may force
    horizontal scroll at 320px. Every text-bearing container breaks long words. */
-.mk .sub,.mk .ccard .day span,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fwork,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .veg,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl span{overflow-wrap:anywhere;word-break:break-word}
+.mk .sub,.mk .ccard .day span,.mk .ccard .ctitle,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fwork,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .veg,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl span{overflow-wrap:anywhere;word-break:break-word}
 /* Flex text cells must be allowed to shrink below their content width to wrap. */
 .mk .ccard .day,.mk .vword .w,.mk .grp h3,.mk .focus .fnext{min-width:0}
 .mk a:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}

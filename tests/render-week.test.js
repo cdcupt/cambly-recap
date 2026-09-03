@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { renderWeek } from "../src/render/week.js";
+import { STYLES } from "../src/render/styles.js";
 import {
   goldenWeek,
   goldenWeekV2,
@@ -284,23 +285,62 @@ test("v2: numbering stays sequential when only SOME optional blocks are present 
   assert.match(planOnly, /<span class="num">06<\/span>Plan for the week of/);
 });
 
-test("v2: the header names the tutor and each class card reads '· with <tutor>' after the title-or-topic", () => {
+test("v2: the header names the tutor; each class card reads an eyebrow (min · with <tutor>) and the title-or-topic as its headline", () => {
   const html = renderWeek(goldenWeekV2());
   assert.match(html, /<p class="sub">2 classes with Niki V\. · published/);
-  // Generic "Pro Lesson" topic → the LLM title shows (escaped), never the generic topic.
-  assert.ok(html.includes(">30 min · Lunch breaks &amp; indoor workdays &lt;script&gt;t()&lt;/script&gt; · with Niki V.</span>"), "title + tutor on card 1");
+  // Generic "Pro Lesson" topic → the LLM title is the headline (escaped), never the generic topic.
+  assert.ok(
+    html.includes('<span>30 min · with Niki V.</span></div><h3 class="ctitle">Lunch breaks &amp; indoor workdays &lt;script&gt;t()&lt;/script&gt;</h3>'),
+    "eyebrow + title headline on card 1",
+  );
   assert.ok(!html.includes("Pro Lesson"), "the generic topic is not displayed when a title exists");
-  // title:null → the topic shows (softened by displayTopic), still with the tutor.
-  assert.ok(html.includes(">60 min · Screen habits &lt;script&gt;alert(1)&lt;/script&gt; · with Niki V.</span>"), "topic + tutor on card 2");
-  // The legacy fixture (specific topic, tutor "Alex R.") reads topic + tutor.
-  assert.ok(renderWeek(goldenWeek()).includes(">30 min · Food for Thought · with Alex R.</span>"), "topic + tutor on the legacy card");
+  // title:null → the topic is the headline (softened by displayTopic), the tutor stays in the eyebrow.
+  assert.ok(
+    html.includes('<span>60 min · with Niki V.</span></div><h3 class="ctitle">Screen habits &lt;script&gt;alert(1)&lt;/script&gt;</h3>'),
+    "eyebrow + topic headline on card 2",
+  );
+  // The legacy fixture (specific topic, tutor "Alex R.") reads the same way.
+  assert.ok(
+    renderWeek(goldenWeek()).includes('<span>30 min · with Alex R.</span></div><h3 class="ctitle">Food for Thought</h3>'),
+    "eyebrow + topic headline on the legacy card",
+  );
 });
 
 test("v2: a class with an empty tutor renders no '· with' suffix", () => {
   const vm = goldenWeekV2();
   vm.classes[1].tutor = "";
   const html = renderWeek(vm);
-  assert.ok(html.includes(">60 min · Screen habits &lt;script&gt;alert(1)&lt;/script&gt;</span>"), "no dangling with");
+  assert.ok(html.includes('<span>60 min</span></div><h3 class="ctitle">Screen habits &lt;script&gt;alert(1)&lt;/script&gt;</h3>'), "no dangling with");
+  assert.ok(!/<span>60 min · with/.test(html));
+});
+
+test("regression (visual): the class title is the card headline — ink display serif, never the small-caps day caption", () => {
+  // The title lives in its own h3, outside the uppercase `.day span` caption …
+  const html = renderWeek(goldenWeekV2());
+  const card = /<article class="ccard">([\s\S]*?)<\/article>/.exec(html)[1];
+  assert.match(card, /^<div class="day"><b>[^<]+<\/b><span>30 min · with Niki V\.<\/span><\/div><h3 class="ctitle">/);
+  assert.ok(!/<span>[^<]*Lunch breaks/.test(card), "the title is not inside the day caption");
+  // … whose rule never uppercases (displayTopic's sentence-case softening must reach the page) and reads as a headline.
+  const rule = /\.mk \.ccard \.ctitle\{([^}]*)\}/.exec(STYLES)[1];
+  assert.ok(!/text-transform/.test(rule), "no text-transform on the title");
+  assert.match(rule, /font-family:var\(--disp\)/);
+  assert.match(rule, /color:var\(--mink\)/);
+  assert.match(rule, /font-size:1\.0[0-9]rem/);
+  assert.match(STYLES, /\.mk \.ccard \.day b\{font-size:\.78rem/, "the date steps back to an eyebrow");
+  assert.match(STYLES, /\.mk \.ccard \.ctitle,/, "the headline is in the defensive overflow-wrap list");
+  // A screaming ALL-CAPS title is softened to sentence case and stays that way in the markup.
+  const vm = goldenWeekV2();
+  vm.classes[0].title = "LUNCH BREAKS AND INDOOR WORKDAYS";
+  assert.ok(renderWeek(vm).includes('<h3 class="ctitle">Lunch breaks and indoor workdays</h3>'));
+  // No title and no topic → no empty headline; the card is flagged so the date takes the headline role.
+  const bare = goldenWeekV2();
+  bare.classes[0].title = null;
+  bare.classes[0].topic = null;
+  const bareHtml = renderWeek(bare);
+  assert.ok(bareHtml.includes('<article class="ccard nohead"><div class="day">'));
+  assert.equal((bareHtml.match(/<h3 class="ctitle">/g) || []).length, 1, "only the second card has a headline");
+  assert.ok(!bareHtml.includes('<h3 class="ctitle"></h3>'));
+  assert.match(STYLES, /\.mk \.ccard\.nohead \.day b\{font-family:var\(--disp\)/);
 });
 
 test("v2: the Focus box gains a 'Work on' line (accent-edged), escaped, only when workOn is present", () => {

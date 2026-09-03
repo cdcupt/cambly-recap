@@ -112,20 +112,29 @@ export function weekSeries(weeks) {
 }
 
 /**
- * Neutral delta chip text vs the first week that has the metric:
- * "+9 wpm since May 4–10" · "−3% since …" · "No change since …". No red/green
+ * The neutral delta vs the first week that has the metric, in two parts: the pill text
+ * (`value`: "+9 wpm" · "−3%" · "No change") and the muted tail (`since`: "since May 4–10").
+ * They are rendered as separate inline pieces so the pill itself never wraps — at 320px a
+ * one-piece "+176 words since May 4–10" chip split into a two-line blob. No red/green
  * judgement. Returns null with fewer than two data points.
  * @param {ReturnType<typeof weekSeries>} series
  * @param {"wpm"|"talkPct"|"words"|"minutes"} key
+ * @returns {{value:string, since:string}|null}
  */
-export function deltaLabel(series, key) {
+export function deltaParts(series, key) {
   const metric = metricByKey(key);
   const pts = series.filter((s) => s[key] !== null);
   if (!metric || pts.length < 2) return null;
   const first = pts[0];
   const d = pts[pts.length - 1][key] - first[key];
-  if (d === 0) return `No change since ${first.weekLabel}`;
-  return `${d > 0 ? "+" : MINUS}${Math.abs(d)}${metric.sep}${metric.unit} since ${first.weekLabel}`;
+  const value = d === 0 ? "No change" : `${d > 0 ? "+" : MINUS}${Math.abs(d)}${metric.sep}${metric.unit}`;
+  return { value, since: `since ${first.weekLabel}` };
+}
+
+/** The delta as one sentence ("+9 wpm since May 4–10") — the two parts joined; null below two points. */
+export function deltaLabel(series, key) {
+  const parts = deltaParts(series, key);
+  return parts ? `${parts.value} ${parts.since}` : null;
 }
 
 // ---------------------------------------------------------------- geometry
@@ -251,8 +260,10 @@ function tile(series, metric) {
   const latest = pts.length ? pts[pts.length - 1][metric.key] : null;
   const unit = metric.showUnit ? `<span class="tu">${metric.unit}</span>` : "";
   const value = latest === null ? `<b>${EMDASH}</b>` : `<b>${esc(latest)}</b>${unit}`;
-  const delta = deltaLabel(series, metric.key);
-  const chip = delta ? `<p class="td">${esc(delta)}</p>` : "";
+  const delta = deltaParts(series, metric.key);
+  const chip = delta
+    ? `<p class="delta"><span class="td">${esc(delta.value)}</span><span class="tds">${esc(delta.since)}</span></p>`
+    : "";
   return (
     `<article class="tile"><h3>${metric.label}</h3><p class="tv">${value}</p>${chip}` +
     sparkline(series, metric) +
@@ -326,8 +337,10 @@ export const CHART_STYLES = `
 .ix .tile h3{margin:0;font-size:.74rem;font-weight:600;line-height:1.3;color:var(--mmuted);overflow-wrap:anywhere}
 .ix .tv{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;margin:4px 0 0;font-size:1.5rem;font-weight:600;line-height:1.1;color:var(--mink)}
 .ix .tv .tu{font-size:.72rem;font-weight:600;color:var(--mmuted)}
-.ix .td{display:inline-block;max-width:100%;margin:7px 0 0;padding:2px 8px;font-size:.66rem;font-weight:600;line-height:1.4;color:var(--ink-soft);background:var(--surface2);border:1px solid var(--mline-soft);border-radius:99px;overflow-wrap:anywhere}
-.ix .spark{position:relative;height:56px;margin:10px 0 0;padding:0 26px}
+.ix .delta{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 6px;margin:7px 0 0;font-size:.66rem;line-height:1.4}
+.ix .td{display:inline-block;padding:2px 8px;font-weight:600;color:var(--ink-soft);background:var(--surface2);border:1px solid var(--mline-soft);border-radius:99px;white-space:nowrap}
+.ix .tds{color:var(--mmuted);white-space:nowrap}
+.ix .spark{position:relative;height:56px;margin:10px 0 0;padding:0 29px}
 .ix .spark svg{display:block;width:100%;height:56px;overflow:visible}
 .ix .spark .pl{position:absolute;width:24px;font-size:.66rem;line-height:1;color:var(--mmuted);transform:translateY(-50%);white-space:nowrap}
 .ix .spark .pl.a{left:0;text-align:right}
@@ -347,7 +360,7 @@ export const CHART_STYLES = `
 .ix .ltrack li b{font-size:.78rem;color:var(--mink)}
 .ix .ltrack li span{font-size:.68rem;color:var(--mmuted)}
 .ix .ptable{margin:12px 0 0}
-.ix .ptable>summary{padding:8px 14px;min-height:34px}
+.ix details.ptable>summary{display:inline-flex;align-items:center;box-sizing:border-box;min-height:44px;padding:0 14px}
 .ix .table-wrap{overflow-x:auto;margin:8px 0 0;-webkit-overflow-scrolling:touch}
 .ix .ptable table{width:100%;min-width:440px;border-collapse:collapse;font-size:.78rem}
 .ix .ptable caption{text-align:left;padding:0 0 6px;font-size:.72rem;color:var(--mmuted)}

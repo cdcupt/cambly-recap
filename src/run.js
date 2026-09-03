@@ -256,11 +256,15 @@ async function ensureRawAndNormalize(rec, ctx) {
 /** The corrections endpoint is the Σ anchor: a dead one can't be told from "0 corrections". */
 const CORRECTIONS_ENDPOINT = "corrective_feedback_corrections";
 
+/** The FIRST_WEEK floor (a YYYY-MM-DD env value), or null when unset / malformed. */
+function firstWeekFloor() {
+  const raw = process.env.FIRST_WEEK;
+  return typeof raw === "string" && WEEK_ID_RE.test(raw.trim()) ? raw.trim() : null;
+}
+
 /** FIRST_WEEK bounds the missed-week self-heal; default = target-only when unset. */
 function resolveFirstWeekId(nowMs) {
-  const raw = process.env.FIRST_WEEK;
-  if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return raw.trim();
-  return targetWeekId(nowMs);
+  return firstWeekFloor() ?? targetWeekId(nowMs);
 }
 
 // ── email context assembly (feeds mail.renderEmail) ──────────────────────────────
@@ -611,14 +615,35 @@ function offlineEnv(opts) {
 
 const rebuildError = (msg) => Object.assign(new Error(msg), { stage: "rebuild" });
 
-/** Validate + canonicalize --rebuild week ids (YYYY-MM-DD, snapped to the CST Monday, de-duplicated). */
-function canonicalWeekIds(weekIds, log) {
+/**
+ * True iff a YYYY-MM-DD string names a REAL calendar date. Date.UTC silently rolls an
+ * out-of-range month/day forward (2026-13-99 → 2027-04-09), so the parsed parts must
+ * round-trip exactly.
+ */
+function isCalendarDate(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+/**
+ * Validate + canonicalize --rebuild week ids: a real calendar date (YYYY-MM-DD), snapped to
+ * its CST Monday, de-duplicated — and never a week that has not ended yet (anything after the
+ * latest complete week as of nowMs), which could only ever mint a bogus "no classes" stub.
+ */
+function canonicalWeekIds(weekIds, { nowMs, log }) {
   if (!Array.isArray(weekIds) || weekIds.length === 0) throw rebuildError("--rebuild needs at least one weekId (YYYY-MM-DD)");
+  const target = targetWeekId(nowMs);
   const canon = weekIds.map((id) => {
     const s = typeof id === "string" ? id.trim() : "";
-    if (!WEEK_ID_RE.test(s)) throw rebuildError(`invalid weekId ${JSON.stringify(id)} (expected YYYY-MM-DD)`);
+    if (!WEEK_ID_RE.test(s) || !isCalendarDate(s)) {
+      throw rebuildError(`invalid weekId ${JSON.stringify(id)} (expected a real calendar date, YYYY-MM-DD)`);
+    }
     const monday = weekWindow(weekIdToStartMs(s)).weekId;
     if (monday !== s) log(`weekId ${s} is not a Monday — rebuilding its week ${monday}`);
+    if (monday > target) {
+      throw rebuildError(`week ${monday} has not ended yet (the latest complete week is ${target}) — refusing to rebuild it`);
+    }
     return monday;
   });
   return [...new Set(canon)].sort();
@@ -636,6 +661,15 @@ async function rebuildWeek(w, ctx) {
     throw rebuildError(
       `no complete raw lessons for week ${w} but its VM has ${(existing.classes || []).length} class(es) — refusing to overwrite it with an empty stub`,
     );
+  }
+  if (lessons.length === 0 && !existing) {
+    // A week the recap has never seen: inside the cron's own range it becomes the same
+    // "no classes" stub the self-heal would write; before FIRST_WEEK it can only be a typo.
+    const floor = firstWeekFloor();
+    if (floor && w < floor) {
+      throw rebuildError(`week ${w} has no raw lessons, no VM, and lies before FIRST_WEEK ${floor} — refusing to create an empty stub`);
+    }
+    log(`rebuild ${w}: no raw lessons and no prior VM — writing an empty "no classes" stub (check the weekId if this is unexpected)`);
   }
   log(`rebuild ${w}: ${lessons.length} lesson(s) from data/raw`);
   const out = await gen({ window: weekWindow(weekIdToStartMs(w)), lessons });
@@ -669,7 +703,7 @@ export async function runRebuild(opts = {}) {
   let stage = "rebuild"; // → "summarize" once lessons are being re-summarized → "build" for the render
   let result;
   try {
-    const weekIds = canonicalWeekIds(opts.weekIds, log);
+    const weekIds = canonicalWeekIds(opts.weekIds, { nowMs, log });
     const uid = opts.uid ?? camblyUid();
     const tutorsMap = readTutorsMap(dataDir, fsImpl);
     const rawLessons = listCompleteRawLessons(dataDir, { fsImpl });
@@ -742,27 +776,55 @@ export async function runRender(opts = {}) {
 
 // ── CLI entrypoint ────────────────────────────────────────────────────────────────
 
+const BOOLEAN_FLAGS = ["--backfill", "--force", "--manual", "--render", "--mail"];
+const REBUILD_PREFIX = "--rebuild=";
+export const USAGE =
+  "usage: node src/run.js [--backfill] [--force] [--manual]  |  --rebuild=<weekId>[,<weekId>…] [--mail]  |  --render";
+
+/** A malformed command line. Raised BEFORE any side effect; main() prints it and exits 2. */
+export class UsageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UsageError";
+    this.exitCode = 2;
+  }
+}
+
 /**
  * CLI flags → options. `--rebuild=<weekId>[,<weekId>…]` selects the offline rebuild
- * (`rebuild` = the id list, else null); `--render` the offline re-render; `--mail`
- * lets a rebuild send its 📗/📭 email. --backfill / --force / --manual drive runGenerate.
+ * (`rebuild` = the id list, else null; several --rebuild= flags concatenate); `--render`
+ * the offline re-render; `--mail` lets a rebuild send its 📗/📭 email. --backfill /
+ * --force / --manual drive runGenerate. STRICT: every token must be one of these exact
+ * forms — a near-miss (`--rebuild 2026-08-24`, a bare `--rebuild`, `--render=…`) or any
+ * unknown token throws UsageError instead of silently falling through to the ONLINE cron
+ * path (Cambly fetch, site-state.json rewrite, email), which the offline modes promise never
+ * to touch.
  */
 export function parseArgs(argv) {
-  const rebuildArg = argv.find((a) => a.startsWith("--rebuild="));
-  const rebuild = rebuildArg ? rebuildArg.slice("--rebuild=".length).split(",").map((s) => s.trim()).filter(Boolean) : null;
+  const tokens = argv.map(String);
+  const stray = tokens.find((a) => !BOOLEAN_FLAGS.includes(a) && !a.startsWith(REBUILD_PREFIX));
+  if (stray !== undefined) throw new UsageError(`unrecognised argument ${JSON.stringify(stray)}\n${USAGE}`);
+  const rebuildLists = tokens.filter((a) => a.startsWith(REBUILD_PREFIX));
+  const rebuild =
+    rebuildLists.length === 0
+      ? null
+      : rebuildLists.flatMap((a) => a.slice(REBUILD_PREFIX.length).split(",").map((s) => s.trim()).filter(Boolean));
   return {
-    backfill: argv.includes("--backfill"),
-    force: argv.includes("--force"),
-    manual: argv.includes("--manual"),
-    render: argv.includes("--render"),
-    mail: argv.includes("--mail"),
+    ...Object.fromEntries(BOOLEAN_FLAGS.map((f) => [f.slice(2), tokens.includes(f)])),
     rebuild,
   };
 }
 
 async function main() {
-  const a = parseArgs(process.argv.slice(2));
   const log = (m) => process.stderr.write(`[cambly-recap] ${m}\n`);
+  let a;
+  try {
+    a = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    log(err.message);
+    process.exit(err.exitCode); // nothing has been read, fetched, written or mailed yet
+  }
   const trigger = a.backfill ? "backfill" : a.manual ? "manual" : "cron";
   const res = a.rebuild
     ? await runRebuild({ weekIds: a.rebuild, mail: a.mail, log })

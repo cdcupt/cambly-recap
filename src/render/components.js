@@ -169,9 +169,12 @@ export function focusBlock(tf) {
 }
 
 /**
- * One class card: day + minutes · title-or-topic · "with <tutor>", teal stat chips, the
- * moment, the optional note, the focus block. The LLM title (set by the builder only for
- * a generic topic) takes precedence over the topic; both go through displayTopic().
+ * One class card: an eyebrow line (day · minutes · "with <tutor>"), the title-or-topic as
+ * the card HEADLINE (h3.ctitle — ink, sentence case; never the small-caps caption, which
+ * would undo displayTopic()'s sentence-case softening), teal stat chips, the moment, the
+ * optional note, the focus block. The LLM title (set by the builder only for a generic
+ * topic) takes precedence over the topic; both go through displayTopic(). With neither,
+ * the card carries the `nohead` class so the date steps back up to the headline role.
  */
 export function classCard(cls) {
   const c = cls || {};
@@ -197,10 +200,12 @@ export function classCard(cls) {
       : "";
   const about = displayTopic(hasText(c.title) ? c.title : c.topic);
   const withTutor = hasText(c.tutor) ? ` ${MDOT} with ${esc(c.tutor)}` : "";
+  const headline = about ? `<h3 class="ctitle">${esc(about)}</h3>` : "";
   return (
-    `<article class="ccard">` +
+    `<article class="ccard${about ? "" : " nohead"}">` +
     `<div class="day"><b>${esc(dateLabel(c.startAt))}</b>` +
-    `<span>${esc(c.minutes ?? 0)} min ${MDOT} ${esc(about)}${withTutor}</span></div>` +
+    `<span>${esc(c.minutes ?? 0)} min${withTutor}</span></div>` +
+    headline +
     `<div class="cstats">${chips}</div>` +
     moment +
     note +

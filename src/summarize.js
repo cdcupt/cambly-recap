@@ -244,7 +244,10 @@ export const RULES = [
   "",
   "Hard rules — every one is later machine-verified; a violation drops the item:",
   "1. NEVER invent content. You may only choose, group, explain, and quote lines that",
-  "   actually appear in the supplied transcripts, chat, or feedback.",
+  "   actually appear in the supplied material. QUOTABLE lines are ONLY the Transcript, Chat",
+  "   and Tutor notes lines of each class. The Corrections records, the \"Cambly coach —\"",
+  "   notes and the \"Tutor's suggested next lesson\" line are evidence to draw on and",
+  "   paraphrase, never to quote — a quote copied from them is rejected by the verifier.",
   "2. Every quote field (each classes[].moment.quotes entry, every vocabulary.quote,",
   "   every phrasing.said, every derived grammar said, every review quote) MUST be copied",
   "   character-for-character from a single supplied line — never stitched across two",
@@ -291,7 +294,7 @@ export const RULES = [
   "   and its lessonId. needsWork = 3–6 items: issue (short label + one clause), fix (what to",
   "   do instead, at most 25 words), an optional verbatim STUDENT quote and its lessonId. Draw",
   "   on the Cambly coach notes and the tutors' suggested next lessons where they agree with",
-  "   the transcript evidence.",
+  "   the transcript evidence — paraphrase them; they are not quotable lines (rule 1).",
   "10. Level (CEFR): judge SPONTANEOUS speech only (ignore read-aloud passages). Use the CEFR",
   "   qualitative aspects of spoken language — range (vocabulary/structures available),",
   "   accuracy (grammar control, error density, whether errors impede meaning), fluency (pace,",
@@ -418,8 +421,9 @@ export function correctiveMessage(rejections) {
     "matches of any supplied line and were rejected:",
     ...lines,
     "",
-    "Re-emit the full JSON. For each rejected item, either copy an exact line from the",
-    "bundle (correct speaker) or omit that item. Do not invent or paraphrase.",
+    "Re-emit the full JSON. For each rejected item, either copy an exact Transcript, Chat or",
+    "Tutor notes line from the bundle (correct speaker) or omit that item. Do not invent or",
+    "paraphrase, and never quote the Cambly coach notes or the correction records.",
   ].join("\n");
 }
 
