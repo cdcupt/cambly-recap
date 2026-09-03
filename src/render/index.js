@@ -6,13 +6,13 @@
 // newest week is empty the badge moves back. When exactly one published week
 // exists, a first-run intro sentence renders so day one is never an empty shell.
 // With two or more published weeks the "Your progress" block (chart.js) sits
-// between the first-run slot and the weeks list; its index-only CSS rides along as
-// one body-level <style> so week pages never pay for it (layout.js stays generic).
+// between the first-run slot and the weeks list; its CSS (CHART_STYLES) is inlined
+// once in the shared <head> stylesheet by layout.js, after STYLES + SECTION_STYLES.
 
 import { htmlDocument } from "./layout.js";
 import { banner, indexRow } from "./components.js";
 import { pluralize } from "./dates.js";
-import { progressBlock, CHART_STYLES } from "./chart.js";
+import { progressBlock } from "./chart.js";
 
 function totalsBar(weeks) {
   const t = weeks.reduce(
@@ -61,10 +61,8 @@ export function renderIndex(weeks, { siteState = {} } = {}) {
 
   // Derived at render time from classes[].stats / stats.minutes; "" below two weeks.
   const progress = progressBlock(sorted);
-  const chartCss = progress ? `<style>${CHART_STYLES}</style>` : "";
 
   const body =
-    chartCss +
     banner(siteState) +
     `<header class="pad">` +
     `<span class="eyebrow">● Cambly weekly recap</span>` +

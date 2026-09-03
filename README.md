@@ -59,6 +59,23 @@ Missed weeks self-heal: whenever a run succeeds, any complete-but-unbuilt week b
 `FIRST_WEEK` is filled in automatically. Re-runs are idempotent — an already-built week
 makes zero LLM calls and sends zero emails.
 
+### Offline modes (no Cambly calls)
+
+Both modes work from the raw lessons already under `data/raw/` and exit 0 on success,
+2 on failure. The generator's entrypoint is `node src/run.js`, so the flags pass
+straight through `docker compose … run --rm generator <flags>`:
+
+```bash
+node src/run.js --render                          # patch tutor names + re-render the site from data/weeks (zero LLM, zero network)
+node src/run.js --rebuild=2026-08-24,2026-08-31   # re-summarize the named weeks from data/raw (OpenAI only), then render
+node src/run.js --rebuild=2026-08-24 --mail       # …and also send the 📗/📭 email for each rebuilt week (off by default)
+```
+
+Tutor names live in `data/tutors.json` — a flat `{ "<tutorId>": { "id", "displayName" } }`
+map that every online run merges into (it never shrinks). Every mode first fills in
+classes whose tutor name was lost from that map, so seeding the file and running
+`--render` is enough to heal an already-published archive.
+
 ## Setup
 
 ### 1. Configure

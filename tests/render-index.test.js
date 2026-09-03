@@ -109,16 +109,16 @@ test("C3 progress block sits between the header and the weeks list once two week
   const nav = html.indexOf('<nav class="pad" aria-label="All weeks">');
   assert.ok(progress > 0, "progress block present");
   assert.ok(header < progress && progress < nav, "header → progress → weeks list");
-  assert.equal((html.match(/<style>/g) || []).length, 2, "layout STYLES + one CHART_STYLES block");
-  assert.ok(html.includes(`<style>${CHART_STYLES}</style>`));
+  assert.equal((html.match(/<style>/g) || []).length, 1, "one <head> stylesheet — layout.js inlines CHART_STYLES there, index.js must not inject it again");
+  assert.equal(html.split(CHART_STYLES).length - 1, 1, "CHART_STYLES appears exactly once");
   // totals bar unchanged: 3 weeks · (2+1+0)=3 classes · (90+60+0)=150 min · (2+2+0)=4 corrections
   assert.match(html, /<i>3 weeks<\/i><i>3 classes<\/i><i>150 min<\/i><i>4 corrections<\/i>/);
 });
 
-test("C3 progress block and its CSS are absent with a single published week", () => {
+test("C3 progress block is absent with a single published week (still one shared stylesheet)", () => {
   const html = renderIndex([goldenWeek(), emptyWeek()], { siteState: healthySiteState() });
   assert.ok(!html.includes('class="pad progress"'));
-  assert.equal((html.match(/<style>/g) || []).length, 1, "only the layout stylesheet");
+  assert.equal((html.match(/<style>/g) || []).length, 1, "only the shared <head> stylesheet");
   assert.ok(html.includes('class="firstrun'), "first-run intro still renders");
 });
 

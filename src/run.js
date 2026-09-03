@@ -273,6 +273,7 @@ function mailCtx(outcome, x) {
       weekId: x.target,
       weekLabel: vm.weekLabel ?? x.target,
       stats: vm.stats ?? { classes: 0, minutes: 0, corrections: 0, expressions: 0 },
+      level: vm.level ?? null,
       weekUrl: `${base}/weeks/${x.target}.html`,
       indexUrl: `${base}/`,
       backfilledCount: x.backfilledCount ?? 0,

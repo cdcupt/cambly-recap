@@ -191,11 +191,11 @@ function hashSite(siteDir) {
       const fp = path.join(dir, e.name);
       const rp = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) walk(fp, rp);
-      else parts.push(`${rp} ${fs.readFileSync(fp, "utf8")}`);
+      else parts.push(`${rp}\u0000${fs.readFileSync(fp, "utf8")}`);
     }
   };
   walk(siteDir, "");
-  return crypto.createHash("sha256").update(parts.join("")).digest("hex");
+  return crypto.createHash("sha256").update(parts.join("\u0001")).digest("hex");
 }
 
 const run = (dataDir, siteDir, opts = {}) =>
