@@ -141,7 +141,7 @@ export const STYLES = `
 .ix ul.weeks a.wrow:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .ix .wl{flex:1;min-width:0}
 .ix .wl b{font-family:var(--disp);font-size:.95rem;font-weight:600;display:block}
-.ix .wl span{font-size:.74rem;color:var(--mmuted)}
+.ix .wl>span{font-size:.74rem;color:var(--mmuted)}
 .ix .wc{font-size:.7rem;font-weight:800;color:var(--acc-ink);background:var(--acc-wash);border-radius:99px;padding:3px 9px;white-space:nowrap}
 /* v1 week with no Cambly correction records — a fact, not a score. */
 .ix .wc.muted{color:var(--ink-soft);background:var(--surface2);border:1px solid var(--mline-soft);font-weight:700}
@@ -162,7 +162,7 @@ body.mk{max-width:760px;margin:0 auto;min-height:100vh;box-shadow:0 0 40px rgba(
 main{display:block}
 /* Defensive wrap: no long unbroken token (URL, pasted greeting, code) may force
    horizontal scroll at 320px. Every text-bearing container breaks long words. */
-.mk .sub,.mk .ccard .day span,.mk .ccard .ctitle,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fwork,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .veg,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl span{overflow-wrap:anywhere;word-break:break-word}
+.mk .sub,.mk .ccard .day span,.mk .ccard .ctitle,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fwork,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .veg,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl>span{overflow-wrap:anywhere;word-break:break-word}
 /* Flex text cells must be allowed to shrink below their content width to wrap. */
 .mk .ccard .day,.mk .vword .w,.mk .grp h3,.mk .focus .fnext{min-width:0}
 .mk a:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
