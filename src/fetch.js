@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { weekIdOf } from "./week.js";
 
 /** Production defaults for the env seams; read at call time so tests can inject. */
 export function camblyBase() {
@@ -296,6 +297,39 @@ export function isLessonRawComplete(dir, { fsImpl = fs } = {}) {
     }
   }
   return true;
+}
+
+/**
+ * The offline lesson inventory (--rebuild): every COMPLETE raw dir under
+ * `<dataDir>/raw/<lessonId>/` whose `_lesson.json` listing record carries a numeric
+ * `scheduledStartAt.$date`, as {lessonId, dir, startMs, weekId}. Incomplete, undated,
+ * or unreadable dirs are skipped — a rebuild only ever re-summarizes what was fully
+ * fetched. Order follows the directory listing; callers sort.
+ *
+ * @param {string} dataDir
+ * @param {{fsImpl?:object}} [deps]
+ * @returns {{lessonId:string, dir:string, startMs:number, weekId:string}[]}
+ */
+export function listCompleteRawLessons(dataDir, { fsImpl = fs } = {}) {
+  const rawDir = path.join(dataDir, "raw");
+  let entries = [];
+  try {
+    entries = fsImpl.readdirSync(rawDir);
+  } catch {
+    return [];
+  }
+  return entries.flatMap((lid) => {
+    const dir = path.join(rawDir, lid);
+    if (!isLessonRawComplete(dir, { fsImpl })) return [];
+    try {
+      const rec = JSON.parse(fsImpl.readFileSync(path.join(dir, "_lesson.json"), "utf8"));
+      const startMs = rec?.scheduledStartAt?.$date;
+      if (typeof startMs !== "number" || !Number.isFinite(startMs)) return [];
+      return [{ lessonId: rec.id || lid, dir, startMs, weekId: weekIdOf(startMs) }];
+    } catch {
+      return [];
+    }
+  });
 }
 
 /**
