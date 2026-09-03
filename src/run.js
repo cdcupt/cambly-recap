@@ -738,10 +738,24 @@ export function parseArgs(argv) {
     rebuildLists.length === 0
       ? null
       : rebuildLists.flatMap((a) => a.slice(REBUILD_PREFIX.length).split(",").map((s) => s.trim()).filter(Boolean));
-  return {
-    ...Object.fromEntries(BOOLEAN_FLAGS.map((f) => [f.slice(2), tokens.includes(f)])),
-    rebuild,
-  };
+  const flags = Object.fromEntries(BOOLEAN_FLAGS.map((f) => [f.slice(2), tokens.includes(f)]));
+  assertFlagCombination(flags, rebuild);
+  return { ...flags, rebuild };
+}
+
+const ONLINE_ONLY = ["backfill", "force", "manual"]; // runGenerate-only flags
+/**
+ * Exactly ONE mode per invocation — online (--backfill/--force/--manual or nothing),
+ * --rebuild=…, or --render — and `--mail` is rebuild-only. A token-only check let a stray
+ * `--mail` (or `--render --backfill`) fall through to the ONLINE cron path (Codex, PR #4).
+ */
+function assertFlagCombination(flags, rebuild) {
+  const conflict = (msg) => { throw new UsageError(`flags cannot be combined: ${msg}\n${USAGE}`); };
+  const online = ONLINE_ONLY.filter((f) => flags[f]).map((f) => `--${f}`);
+  if (flags.render && rebuild !== null) conflict("--render with --rebuild=");
+  if (flags.render && online.length) conflict(`--render with ${online.join(" ")}`);
+  if (rebuild !== null && online.length) conflict(`--rebuild= with ${online.join(" ")}`);
+  if (flags.mail && rebuild === null) conflict(flags.render ? "--render with --mail (mail is rebuild-only)" : "--mail without --rebuild= (mail is rebuild-only)");
 }
 
 async function main() {

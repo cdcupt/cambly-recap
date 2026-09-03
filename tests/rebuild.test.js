@@ -450,6 +450,33 @@ test("parseArgs reads --rebuild=<ids> (comma list), --render and --mail alongsid
   assert.deepEqual(parseArgs([]).rebuild, null);
 });
 
+test("regression (Codex PR #4): parseArgs rejects unsupported flag COMBINATIONS — a stray --mail or a mode mix never falls through to the online run", () => {
+  const bad = [
+    ["--mail"],
+    ["--mail", "--backfill"],
+    ["--render", "--mail"],
+    ["--render", "--backfill"],
+    ["--render", "--force", "--manual"],
+    ["--render", "--rebuild=2026-08-24"],
+    ["--rebuild=2026-08-24", "--backfill"],
+    ["--rebuild=2026-08-24", "--force"],
+    ["--rebuild=2026-08-24", "--mail", "--manual"],
+  ];
+  for (const argv of bad) {
+    assert.throws(
+      () => parseArgs(argv),
+      (e) => e instanceof UsageError && e.exitCode === 2 && /flags cannot be combined/.test(e.message) && e.message.includes(USAGE),
+      argv.join(" "),
+    );
+  }
+  // Every legitimate mode still parses: online (bare / any online flags), rebuild (± --mail), render.
+  assert.equal(parseArgs([]).rebuild, null);
+  assert.equal(parseArgs(["--backfill", "--force", "--manual"]).backfill, true);
+  assert.deepEqual(parseArgs(["--rebuild=2026-08-24", "--mail"]).rebuild, ["2026-08-24"]);
+  assert.equal(parseArgs(["--rebuild=2026-08-24"]).mail, false);
+  assert.equal(parseArgs(["--render"]).render, true);
+});
+
 test("regression: parseArgs is strict — a near-miss offline flag or any unknown token is a UsageError, never a silent online run", () => {
   for (const argv of [
     ["--rebuild", "2026-08-24"], // space instead of '='
