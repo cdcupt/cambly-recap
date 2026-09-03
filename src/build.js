@@ -5,31 +5,51 @@
 // HTML — rendering is the frontend renderer's job (§F1). Enforcement points:
 //
 //   Gate #1 quote-guard  — every ▣ field (vocabulary.quote, phrasing.said, each
-//     classes[].moment.quotes entry) must substring-match the lesson's quote corpus
-//     after NFKC + curly→straight + whitespace-collapse (case-preserving), on the
-//     side matching quoteBy. Fail ⇒ dropped + logged, never rendered. Practice items
-//     carry no verbatim field and are gated by lineage instead.
+//     classes[].moment.quotes entry, each transcript-derived grammar `said`, each
+//     review quote) must substring-match ONE line of the lesson's quote corpus after
+//     NFKC + curly→straight + whitespace-collapse, compared case-insensitively (the
+//     LLM capitalises the first word of a mid-sentence span), on the side matching
+//     quoteBy. Fail ⇒ dropped + logged (review quotes: nulled, item kept), never
+//     rendered. Practice items carry no verbatim field and are gated by lineage.
 //
-//   Gate #2 Σ-invariant  — the multiset of placed correction ids (grammar items ∪
-//     non-null vocabulary.fromCorrectionId ∪ non-null phrasing.fromCorrectionId) must
-//     equal the raw corrective-feedback id set. Missing ⇒ self-healed into an
+//   Gate #2 Σ-invariant  — the multiset of placed correction ids (anchored grammar
+//     items ∪ non-null vocabulary.fromCorrectionId ∪ non-null phrasing.fromCorrectionId)
+//     must equal the raw corrective-feedback id set. Missing ⇒ self-healed into an
 //     "Other fixes" group (rule:null) from the raw record; duplicate ⇒ first placement
-//     wins, the later reference stripped; invented ⇒ dropped. All logged.
+//     wins, the later reference stripped; invented ⇒ dropped. All logged. Transcript-
+//     derived grammar items (correctionId null, derived:true) sit OUTSIDE Σ.
 //
 // The composed VM satisfies the §10 hard gate by construction:
-//   integrity.reportedCorrections === renderedGrammar + renderedVocab + renderedPhrasing.
-// stats.corrections is the USER-FACING count and equals renderedGrammar — what the
-// Grammar section actually lists — so the header stat, the index "N fixes" badge, and
-// the section total always agree; the raw Cambly-reported total lives only in integrity.
+//   integrity.reportedCorrections === anchoredGrammar + renderedVocab + renderedPhrasing.
+// stats.corrections is the USER-FACING count and equals renderedGrammar (anchored +
+// derived) — what the Grammar section actually lists — so the header stat, the index
+// "N fixes" badge, and the section total always agree; the raw Cambly-reported total
+// lives only in integrity.
 
 import { cstIso, resolveNow } from "./week.js";
 import { normalizeQuote } from "./quote.js";
 import { cleanCorrectionText } from "./normalize.js";
+import { stripWorksheet, stripWorksheetStrict } from "./coach.js";
 import {
   summarizeWeek,
   openaiModel,
   buildWeekBundle,
 } from "./summarize.js";
+// Block composition (grammar heading · tutorFocus · review / level / plan) lives in
+// ./compose.js; the builder keeps the gates, the Σ placement and the VM assembly.
+import {
+  hasStr,
+  humanizePattern,
+  tutorFocusOf,
+  dedupeFocusSignoff,
+  composeReview,
+  composeLevel,
+  composePlan,
+  nextWeekLabel,
+} from "./compose.js";
+
+// Re-exported here because build tests and older callers import them from this module.
+export { humanizePattern, nextWeekLabel };
 
 export const SCHEMA_VERSION = 1;
 /** >30% of quote-guarded items rejected triggers exactly one corrective re-prompt (I-SM ④). */
@@ -60,11 +80,18 @@ export class SummarizeQualityError extends Error {
 // Re-exported here because build tests import it from this module.
 export { normalizeQuote };
 
-/** Per-lesson quote corpus split by side. Feedback (tutor notes) is tutor-side. */
+/**
+ * Per-lesson quote corpus split by side. Transcript lines come from the normalizer's
+ * merged `segments` (whole speaker turns — what the LLM read and quoted from) when
+ * present, else the raw `transcript` fragments. Chat is per side; feedback (tutor
+ * notes) is tutor-side.
+ */
 export function quoteCorpus(lesson) {
   const student = [];
   const tutor = [];
-  for (const t of lesson.transcript || []) {
+  const lines =
+    Array.isArray(lesson.segments) && lesson.segments.length ? lesson.segments : lesson.transcript || [];
+  for (const t of lines) {
     (t.speaker === "student" ? student : tutor).push(t.text);
   }
   for (const m of lesson.chat || []) {
@@ -74,16 +101,22 @@ export function quoteCorpus(lesson) {
   return { student, tutor, any: [...student, ...tutor] };
 }
 
+const EMPTY_CORPUS = Object.freeze({ student: [], tutor: [], any: [] });
+
 /**
  * True iff `quote` is a verbatim (normalized) substring of at least one single line on
  * the requested side. Matching is per-line — never a concatenated corpus — so a quote
- * that spans two turns is correctly rejected (U-QG ⑧). Empty/whitespace-only ⇒ false.
+ * that spans two turns is correctly rejected (U-QG ⑧). The comparison is CASE-
+ * INSENSITIVE (both sides lower-cased after `normalizeQuote`, which itself stays
+ * case-preserving): the LLM capitalises the first word of a mid-sentence span ("If I
+ * have two choice…" vs "…think if I have two choice…") and that is not a real
+ * mismatch. Empty/whitespace-only ⇒ false.
  */
 export function quoteMatches(quote, corpus, side = "any") {
-  const needle = normalizeQuote(quote);
+  const needle = normalizeQuote(quote).toLowerCase();
   if (!needle) return false;
   const lines = corpus[side] || [];
-  return lines.some((line) => normalizeQuote(line).includes(needle));
+  return lines.some((line) => normalizeQuote(line).toLowerCase().includes(needle));
 }
 
 // ── Small helpers ──────────────────────────────────────────────────────────────
@@ -96,41 +129,6 @@ function lessonMap(lessons) {
   const map = new Map();
   for (const l of lessons) map.set(l.lessonId, l);
   return map;
-}
-
-const PATTERN_FALLBACK = "Other fixes";
-
-/**
- * A human-readable grammar-habit heading (beta finding 3). A good pattern passes through
- * UNCHANGED ("Past tense", "Subject-verb agreement", "must/try forms"). The degenerate
- * labels the summarizer sometimes emits are repaired: a punctuation-only / empty label
- * ("." , "") → the fallback; a slash-wrapped, hyphen/underscore-slug, or camelCase label
- * ("/tense-with-past-time/", "PAST-TENSE-ERRORS", "pastTense", "past-Tense") → slashes
- * become " & " concept separators, camelCase humps and slug separators become spaces, the
- * result is lower-cased and its first letter capitalized. Case-insensitive so ALL-CAPS and
- * mixed-case slugs normalize too (finding 6). Never returns "." or an empty heading.
- */
-export function humanizePattern(pattern) {
-  const raw = (typeof pattern === "string" ? pattern : "").trim();
-  if (raw.replace(/[^\p{L}\p{N}]/gu, "") === "") return PATTERN_FALLBACK;
-  const wrapped = raw.startsWith("/") || raw.endsWith("/");
-  const hyphenSlug = /^[\p{L}\p{N}]+(?:[-_][\p{L}\p{N}]+)+$/u.test(raw);
-  const camelCase = /^\p{Ll}[\p{L}\p{N}]*\p{Lu}[\p{L}\p{N}]*$/u.test(raw);
-  if (!wrapped && !hyphenSlug && !camelCase) return pattern; // already human — leave verbatim
-  const out = raw
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "")
-    .split("/")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join(" & ")
-    .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2") // split camelCase humps
-    .replace(/[-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  if (out === "") return PATTERN_FALLBACK;
-  return out.charAt(0).toUpperCase() + out.slice(1);
 }
 
 /** A crude inflectional stem: drop a common suffix, then undo a doubled final consonant
@@ -150,8 +148,6 @@ function foldText(s) {
 function foldLoose(s) {
   return foldText(s).replace(/[^\p{L}\p{N} ]/gu, "").replace(/\s+/g, " ").trim();
 }
-
-const hasStr = (v) => typeof v === "string" && v.trim() !== "";
 
 /**
  * Case-insensitive: does the quote actually contain the vocabulary term (beta finding 3)?
@@ -186,18 +182,53 @@ function wordCount(s) {
   return foldText(s).split(" ").filter(Boolean).length;
 }
 
+const WORD_CHAR = /[\p{L}\p{N}']/u;
+
 /**
- * True iff the quote is a circular DEFINITION of the term rather than a usage of it —
- * "Gossip means talking about…", "A fad diet is when…". Detected only when the term itself
- * is the grammatical subject immediately followed by a defining copula, so an incidental
- * "means"/"is" elsewhere in a real sentence never trips it.
+ * Index just past a LEADING occurrence of the (folded) term in the lower-cased quote, or -1.
+ * An exact match ending at a word boundary wins; otherwise the quote's leading word tokens
+ * must stem-match the term's tokens one for one ("Tourist traps, …" ~ "tourist trap",
+ * "well-being" ~ "well being"), with only whitespace or a hyphen between them.
+ */
+function leadingTermEnd(q, t) {
+  if (q.startsWith(t) && !WORD_CHAR.test(q.charAt(t.length))) return t.length;
+  const tStems = t.split(" ").filter(Boolean).map(stemToken);
+  if (tStems.length === 0 || tStems.some((s) => s === "")) return -1;
+  const words = /[\p{L}\p{N}']+/gu; // fresh per call: a global regex carries lastIndex state
+  let end = 0;
+  for (const stem of tStems) {
+    const m = words.exec(q);
+    if (!m || stemToken(m[0]) !== stem || !/^[\s-]*$/u.test(q.slice(end, m.index))) return -1;
+    end = m.index + m[0].length;
+  }
+  return end;
+}
+
+// A leading term followed by one of these introduces a GLOSS, not a usage: "Tourist trap,
+// a place that…", "attire/ clothes you wear", "Paradox: a situation…", "term - gloss",
+// "term — gloss", "term (gloss)". A hyphen counts only with whitespace beside it, so a
+// hyphenated compound ("tourist-trap") is never mistaken for a separator.
+const GLOSS_SEPARATOR = /^\s*(?:[,:/(]|[—–]|\s-|-\s)/u;
+const DEFINING_COPULA = /^(means?|is|are|refers?\s+to|describes?|stands?\s+for|is\s+when|is\s+a|is\s+the)\b/u;
+
+/**
+ * True iff the quote is a DEFINITION of the term rather than a usage of it — either the
+ * dictionary shape "Gossip means talking about…" / "A fad diet is when…" (the term as the
+ * subject, immediately followed by a defining copula) or the glossary shape "Tourist trap, a
+ * place that…" / "attire/ clothes you wear" / "Paradox: a situation…" (the term, then a
+ * separator, then the gloss). Case-insensitive; the term may be plural/inflected exactly as
+ * quoteContainsTerm allows. An incidental "means"/"is"/comma later in a real sentence never
+ * trips it, because the term must open the line.
  */
 function definesTerm(quote, term) {
-  const q = foldText(quote);
+  const q = normalizeQuote(quote).toLowerCase(); // hyphens kept: " - " is a separator here
   const t = foldText(term);
-  if (!t || !q.startsWith(t + " ")) return false;
-  const rest = q.slice(t.length).trim();
-  return /^(means?|is|are|refers?\s+to|describes?|stands?\s+for|is\s+when|is\s+a|is\s+the)\b/u.test(rest);
+  if (!t) return false;
+  const end = leadingTermEnd(q, t);
+  if (end === -1) return false;
+  const rest = q.slice(end);
+  if (GLOSS_SEPARATOR.test(rest)) return true;
+  return /^\s/u.test(rest) && DEFINING_COPULA.test(rest.trim());
 }
 
 /**
@@ -252,154 +283,50 @@ function isCleanVocabExample(quote, term, { errorForms, exampleFreq }) {
   return true;
 }
 
-/**
- * finalAIFeedback → the coach-summary prose string, verbatim. Recent lessons carry an
- * object of prose sections (whatYouDidWell / whatWeCanWorkOn / ideasForPractice); the
- * summary section surfaced as the coach summary is `whatYouDidWell`. Older shapes may
- * carry a plain string. Anything with no usable summary prose → null. We deliberately do
- * NOT fall back to an arbitrary Object.values() section: a criticism-oriented section
- * (e.g. whatWeCanWorkOn) surfaced under the positive coach-summary slot is a semantic
- * mismatch, so only the summary-style key is allowed. A returned value is always a
- * verbatim slice of Cambly's own text (never synthesized), so it is not quote-guarded.
- */
-const AI_FEEDBACK_SUMMARY_KEYS = ["whatYouDidWell"];
+// Worksheet stripping lives in ./coach.js (shared with the summarizer's bundle so the
+// Focus box and the LLM's input can never disagree about what counts as coaching).
+// Re-exported here because build tests and older callers import it from this module.
+export { stripWorksheet, stripWorksheetStrict };
 
-function aiFeedbackProse(v) {
-  if (typeof v === "string") return v.trim() ? v : null;
-  if (v && typeof v === "object") {
-    for (const key of AI_FEEDBACK_SUMMARY_KEYS) {
-      if (typeof v[key] === "string" && v[key].trim()) return v[key];
-    }
-  }
-  return null;
-}
+// Generic lesson-plan titles that say nothing about the class ("Pro Lesson"). Only for
+// these does the LLM's specific title (RULE 12) stand in for the topic on the class card.
+const GENERIC_TOPICS = new Set(["", "pro lesson", "kickoff conversation", "conversation"]);
+const TITLE_MAX_WORDS = 12;
 
-// Worksheet/exercise markers Cambly sometimes pastes after the real coaching sentences.
-// These fire ONLY on lines that are STRUCTURALLY drill material, never on ordinary coaching
-// prose (beta findings 1 + 2). A leading decorative emoji is stripped before matching so a
-// celebratory opener ("🎉 Amazing progress this week! …") is judged on its words, and the
-// drill keywords are anchored to line-start so "exercise"/"choose the correct" never fire as
-// mid-sentence words ("you did this breathing exercise 3 times").
-const LEADING_EMOJI = /^(?:\p{Extended_Pictographic}[\uFE0F\u200D]*)+\s*/u;
-const SECTION_TITLE_MAX = 56;
-
-// HARD drill markers — unambiguous worksheet content; always a boundary (tested post
-// emoji-strip so an emoji-led "✏️ Exercise 1: …" still matches the line-start anchor).
-const DRILL_MARKER = [
-  /^exercise\s*\d/i,                        // "Exercise 1: Choose the Correct Verb"
-  /^choose the correct\b/i,                 // multiple-choice drill instruction
-  /^fix the .{0,24}\bmistakes\b/i,          // "Fix the … Mistakes" header
-  /_{4,}/,                                   // a fill-in-the-blank run  ______  /  → ______
-  /^\d+[.)]\s+[^\n]*\([^)]*\/[^)]*\)/,       // "1. Yesterday I (go / went / gone) home." drill item
-];
-
-/** True iff a line is an emoji-led section title (short, no sentence-ending punctuation). */
-function isEmojiSectionTitle(t) {
-  if (!LEADING_EMOJI.test(t)) return false;
-  const bare = t.replace(LEADING_EMOJI, "").trim();
-  if (!bare || bare.length > SECTION_TITLE_MAX) return false;
-  return !/[.!?…]$/u.test(bare); // a real coaching sentence ends in . ! ? …
-}
-
-/** "hard" (drill marker), "soft" (emoji section title), or "none" for a coaching line. */
-function worksheetBoundary(rawLine) {
-  const t = rawLine.trim();
-  if (!t) return "none";
-  const bare = t.replace(LEADING_EMOJI, "").trim() || t;
-  if (DRILL_MARKER.some((re) => re.test(bare))) return "hard";
-  if (isEmojiSectionTitle(t)) return "soft";
-  return "none";
+/** True iff a lesson topic is missing or one of Cambly's generic lesson-plan titles. */
+export function isGenericTopic(topic) {
+  return GENERIC_TOPICS.has(foldText(typeof topic === "string" ? topic : ""));
 }
 
 /**
- * Curated coaching prose ONLY — the worksheet/exercise tail Cambly sometimes pastes into
- * an ai_tutor field (finalAIFeedback.whatYouDidWell / tutorNotes) is truncated so the
- * "Focus & tutor feedback" box never shows drill material (beta finding 1). Cuts at the
- * FIRST worksheet-marker line — an emoji-led section title, a line-start "Exercise N" /
- * "Choose the Correct" / "Fix the … Mistakes" header, a run of blank-fill underscores, or a
- * numbered drill item that carries slash options — keeping every genuine coaching sentence
- * before it. A bare celebratory emoji or a plain enumerated coaching tip ("1. Watch your
- * articles.") is NOT a boundary. A non-string passes through untouched; a value that is
- * entirely HARD-marker worksheet collapses to null, but a leading emoji title never nulls
- * the coaching (finding 1) — it is far more likely a decorative opener than a real drill.
+ * classes[].title — the LLM's specific 3–7 word title of what the class was about, used
+ * ONLY when the lesson topic is generic. A blank, generic ("Pro Lesson") or over-long wire
+ * title yields null, and a specific topic always wins (title null).
  */
-export function stripWorksheet(text) {
-  if (typeof text !== "string") return text;
-  const lines = text.split("\n");
-  let cut = -1;
-  let kind = "none";
-  for (let i = 0; i < lines.length; i++) {
-    const k = worksheetBoundary(lines[i]);
-    if (k !== "none") {
-      cut = i;
-      kind = k;
-      break;
-    }
-  }
-  if (cut === -1) return text; // no worksheet tail — unchanged
-  const kept = lines.slice(0, cut).join("\n").replace(/\s+$/u, "");
-  if (kept !== "") return kept;
-  // Nothing kept: a HARD drill marker as the first content line ⇒ all worksheet ⇒ null; a
-  // leading emoji title never erases genuine coaching (finding 1) ⇒ keep the text as-is.
-  return kind === "hard" ? null : text;
-}
-
-/** Normalize a line for sign-off duplicate detection: letters/digits/space, lower-case. */
-function signoffKey(s) {
-  return normalizeQuote(typeof s === "string" ? s : "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N} ]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const SIGNOFF_MIN = 12; // avoid stripping a short line that is only incidentally a substring
-
-/**
- * Show the tutor's closing line ONCE (beta finding 2). The class card already surfaces the
- * moment/highlight and the tutor note; when a coaching line in the Focus box repeats that
- * same sign-off it is stripped from the Focus box (the class highlight stays authoritative).
- * Comparison is punctuation/emoji-insensitive containment with a min-length guard so a short
- * genuine line is never removed. Returns tutorFocus with any duplicate lines cleared.
- */
-function dedupeFocusSignoff(tf, highlights) {
-  if (!tf || typeof tf !== "object") return tf;
-  const others = highlights.map(signoffKey).filter((s) => s.length >= SIGNOFF_MIN);
-  if (others.length === 0) return tf;
-  const strip = (text) => {
-    if (typeof text !== "string" || text.trim() === "") return text;
-    const kept = text
-      .split("\n")
-      .filter((line) => {
-        const n = signoffKey(line);
-        if (n.length < SIGNOFF_MIN) return true; // too short to be a sign-off duplicate
-        return !others.some((o) => o === n || o.includes(n) || n.includes(o));
-      })
-      .join("\n")
-      .replace(/\s+$/u, "");
-    return kept.trim() === "" ? null : kept;
-  };
-  return { ...tf, aiFeedback: strip(tf.aiFeedback), tutorNotes: strip(tf.tutorNotes) };
+function classTitle(topic, wireTitle) {
+  if (!isGenericTopic(topic) || !hasStr(wireTitle)) return null;
+  const t = wireTitle.trim();
+  if (isGenericTopic(t) || wordCount(t) > TITLE_MAX_WORDS) return null;
+  return t;
 }
 
 /**
- * Per-class coaching block (WeekVM.tutorFocus, §10 contract addition), lifted VERBATIM
- * from the lesson's normalized ai_tutor feedback: the AI coach summary, the tutor's
- * prose note, its Chinese translation, and the suggested next focus. This is Cambly's
- * own text — NOT a learner-error claim — so it is never routed through the quote-guard.
- * Returns null for lessons with no ai_tutor feedback (the older data shape).
+ * The LLM-authored model sentence for a vocabulary card (RULE 8), shown ONLY when no clean
+ * verbatim quote survived. Kept iff it is a short (≤ VOCAB_EXAMPLE_MAX_WORDS) real usage of
+ * the term that is neither a definition nor a flagged error form; else null.
  */
-function tutorFocusOf(lesson) {
-  const f = lesson.aiTutorFeedback;
-  if (!f || typeof f !== "object") return null;
-  return {
-    // Worksheet/exercise tails are stripped so the Focus box shows coaching prose only.
-    aiFeedback: stripWorksheet(aiFeedbackProse(f.finalAIFeedback)),
-    tutorNotes: stripWorksheet(f.tutorNotes ?? null),
-    tutorNotesZh: f.tutorNotesTranslated ?? null,
-    nextFocus: f.finalSuggestedNextLesson ?? null,
-  };
+function vocabExampleOf(example, term, errorForms) {
+  if (!hasStr(example)) return null;
+  if (!quoteContainsTerm(example, term)) return null;
+  if (definesTerm(example, term)) return null;
+  if (wordCount(example) > VOCAB_EXAMPLE_MAX_WORDS) return null;
+  if (matchesErrorForm(example, errorForms)) return null;
+  return example.trim();
 }
+
+/** RULE 6 caps for transcript-derived grammar items. */
+export const DERIVED_GRAMMAR_MAX = 12;
+export const DERIVED_SAID_MAX_WORDS = 25;
 
 /** id → { said, fix, why, lessonId } for every raw correction across the week (the Σ anchor). */
 function correctionIndex(lessons) {
@@ -439,14 +366,24 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
 
   let quoteItemsTotal = 0;
   let quoteItemsRejected = 0;
-  const guard = (quote, corpus, side, meta) => {
+  // `dropped:false` marks a guarded field whose miss nulls the quote but keeps the item
+  // (review quotes); the miss still counts toward the corrective re-prompt ratio.
+  const guard = (quote, corpus, side, { dropped = true, ...meta } = {}) => {
     quoteItemsTotal += 1;
     const ok = quoteMatches(quote, corpus, side);
     if (!ok) {
       quoteItemsRejected += 1;
-      logReject({ type: "quote-guard", dropped: true, quote, quoteBy: side, reason: "no verbatim match", ...meta });
+      const reason = dropped ? "no verbatim match" : "no verbatim match → quote nulled, item kept";
+      logReject({ type: "quote-guard", dropped, quote, quoteBy: side, reason, ...meta });
     }
     return ok;
+  };
+  // One corpus per lesson, built lazily and shared by every guarded section.
+  const corpusCache = new Map();
+  const corpusFor = (lessonId) => {
+    if (!byLesson.has(lessonId)) return EMPTY_CORPUS;
+    if (!corpusCache.has(lessonId)) corpusCache.set(lessonId, quoteCorpus(byLesson.get(lessonId)));
+    return corpusCache.get(lessonId);
   };
 
   // ── classes[] — ONE card per normalized lesson (builder-owned, §10). The wire
@@ -470,7 +407,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   const classes = lessons
     .map((l) => {
       const c = wireByLesson.get(l.lessonId) || {};
-      const corpus = quoteCorpus(l);
+      const corpus = corpusFor(l.lessonId);
       const momentText = c.moment?.text ?? "";
       const rawQuotes = Array.isArray(c.moment?.quotes) ? c.moment.quotes : [];
       // Corpus-only guard (see the section comment): a highlight must be a verbatim
@@ -478,15 +415,26 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
       const quotes = rawQuotes.filter((q) =>
         guard(q, corpus, "any", { section: "moment", lessonId: l.lessonId }),
       );
-      const tutorNote = c.tutorNote ?? null;
+      const focus = tutorFocusOf(l);
+      // RULE 13: the wire tutorNote renders only as a VERBATIM tutor line (chat · tutor notes ·
+      // tutor turns — tutor-side guard), and never when Cambly's own tutorNotes already reach
+      // the Focus box (the note shows once). Anything else — a paraphrase or a topic summary
+      // the LLM put there — is dropped + logged, never published as tutor feedback.
+      const rawNote = hasStr(c.tutorNote) ? c.tutorNote : null;
+      const tutorNote =
+        rawNote !== null && !hasStr(focus?.tutorNotes) && guard(rawNote, corpus, "tutor", { section: "tutorNote", lessonId: l.lessonId })
+          ? rawNote
+          : null;
       // The class highlight (moment/tutorNote) is authoritative; a coaching line in the
       // Focus box that repeats the same sign-off is stripped so it shows once (finding 2).
-      const tutorFocus = dedupeFocusSignoff(tutorFocusOf(l), [momentText, tutorNote]);
+      const tutorFocus = dedupeFocusSignoff(focus, [momentText, tutorNote]);
       return {
         lessonId: l.lessonId,
         startAt: l.startAtCST,
         minutes: intOr0(l.minutes),
         topic: l.topic || "",
+        // RULE 12: a specific LLM title stands in ONLY for a generic topic ("Pro Lesson").
+        title: classTitle(l.topic, c.title),
         tutor: l.tutor || "",
         stats: {
           wpm: intOr0(l.stats?.wpm),
@@ -516,6 +464,10 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   for (const p of Array.isArray(wire.phrasing) ? wire.phrasing : []) {
     if (p && hasStr(p.said)) errorForms.push(p.said);
   }
+  // …and the transcript-derived grammar candidates' own `said` spans (RULE 6).
+  for (const g of Array.isArray(wire.grammarGroups) ? wire.grammarGroups : []) {
+    for (const it of Array.isArray(g?.items) ? g.items : []) if (it && hasStr(it.said)) errorForms.push(it.said);
+  }
   // Fold-count every candidate example so an example repeated verbatim across two cards (a
   // tutor reciting a vocab list) is dropped from ALL of them, not just the later copies.
   const exampleFreq = new Map();
@@ -527,8 +479,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   }
   const vocabulary = [];
   wireVocab.forEach((v) => {
-    const l = byLesson.get(v.lessonId);
-    const corpus = l ? quoteCorpus(l) : { student: [], tutor: [], any: [] };
+    const corpus = corpusFor(v.lessonId);
     const side = v.quoteBy === "tutor" ? "tutor" : "student";
     if (!guard(v.quote, corpus, side, { section: "vocabulary", lessonId: v.lessonId })) return;
     // The quote is a verbatim line — but a flashcard example is only KEPT when it is a real,
@@ -546,6 +497,8 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
       meaning: v.meaning,
       quote: hasExample ? v.quote : null,
       quoteBy: hasExample ? side : null,
+      // RULE 8: the LLM's model sentence fills in ONLY when no clean verbatim usage survived.
+      example: hasExample ? null : vocabExampleOf(v.example, v.term, errorForms),
       lessonId: v.lessonId,
       fromCorrectionId: v.fromCorrectionId ?? null,
     });
@@ -555,9 +508,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   const wirePhrasing = Array.isArray(wire.phrasing) ? wire.phrasing : [];
   const phrasing = [];
   wirePhrasing.forEach((p) => {
-    const l = byLesson.get(p.lessonId);
-    const corpus = l ? quoteCorpus(l) : { student: [], tutor: [], any: [] };
-    if (!guard(p.said, corpus, "student", { section: "phrasing", lessonId: p.lessonId })) return;
+    if (!guard(p.said, corpusFor(p.lessonId), "student", { section: "phrasing", lessonId: p.lessonId })) return;
     phrasing.push({
       id: `ph-${phrasing.length + 1}`,
       said: p.said,
@@ -568,13 +519,51 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
     });
   });
 
+  // ── RULE 6 — transcript-derived grammar items (correctionId null) ─────────────
+  // The LLM's own said/fix for an error it spotted in the student's speech. Accepted
+  // only when `said` is a verbatim STUDENT span (case-insensitive corpus guard), the
+  // span is short, `fix` actually differs, the lesson is this week's, the span is not a
+  // duplicate, and the week-wide cap holds. Ids "g-d<n>", derived:true, OUTSIDE Σ.
+  const derivedSeen = new Set();
+  let derivedCount = 0;
+  const deriveGrammarItem = (it) => {
+    const drop = (reason) => {
+      logReject({ type: "derived-grammar", dropped: true, section: "grammar", lessonId: it.lessonId ?? null, said: it.said ?? null, reason });
+      return null;
+    };
+    if (!byLesson.has(it.lessonId)) return drop("lessonId not in this week");
+    if (!hasStr(it.said) || !hasStr(it.fix)) return drop("said/fix empty");
+    if (wordCount(it.said) > DERIVED_SAID_MAX_WORDS) return drop(`said longer than ${DERIVED_SAID_MAX_WORDS} words`);
+    if (foldLoose(it.said) === foldLoose(it.fix)) return drop("fix identical to said");
+    if (derivedSeen.has(foldLoose(it.said))) return drop("duplicate derived said");
+    if (derivedCount >= DERIVED_GRAMMAR_MAX) return drop(`more than ${DERIVED_GRAMMAR_MAX} derived items`);
+    if (!guard(it.said, corpusFor(it.lessonId), "student", { section: "grammar", lessonId: it.lessonId })) return null;
+    derivedSeen.add(foldLoose(it.said));
+    derivedCount += 1;
+    return {
+      id: `g-d${derivedCount}`,
+      said: it.said,
+      fix: it.fix,
+      why: cleanCorrectionText(it.why) ?? "",
+      lessonId: it.lessonId,
+      correctionId: null,
+      derived: true,
+    };
+  };
+
   // ── Σ placement — grammar first, so grammar wins duplicate ties ───────────────
   const claimed = new Set();
   const wireGroups = Array.isArray(wire.grammarGroups) ? wire.grammarGroups : [];
   const grammarGroups = [];
   for (const g of wireGroups) {
     const items = [];
-    for (const it of Array.isArray(g.items) ? g.items : []) {
+    for (const it of Array.isArray(g?.items) ? g.items : []) {
+      if (!it || typeof it !== "object") continue;
+      if (it.correctionId === null || it.correctionId === undefined) {
+        const derived = deriveGrammarItem(it);
+        if (derived) items.push(derived);
+        continue;
+      }
       const cid = it.correctionId;
       const raw = corrById.get(cid);
       if (!raw) {
@@ -596,6 +585,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
         why: cleanCorrectionText(it.why) ?? "",
         lessonId: raw.lessonId,
         correctionId: cid,
+        derived: false,
       });
     }
     if (items.length) grammarGroups.push({ pattern: humanizePattern(g.pattern), rule: g.rule ?? null, items });
@@ -627,10 +617,16 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
       const raw = corrById.get(cid);
       claimed.add(cid);
       logReject({ type: "self-heal", dropped: false, section: "grammar", correctionId: cid, reason: "unplaced correction rendered in Other fixes" });
-      return { id: `g-${cid}`, said: raw.said, fix: raw.fix, why: cleanCorrectionText(raw.why) ?? "", lessonId: raw.lessonId, correctionId: cid };
+      return { id: `g-${cid}`, said: raw.said, fix: raw.fix, why: cleanCorrectionText(raw.why) ?? "", lessonId: raw.lessonId, correctionId: cid, derived: false };
     });
     grammarGroups.push({ pattern: "Other fixes", rule: null, items });
   }
+
+  // ── review · level · plan (RULES 9–11) — optional blocks, omitted when unusable ──
+  const composeCtx = { guard, corpusFor, byLesson, logReject };
+  const review = composeReview(wire.review, composeCtx);
+  const level = composeLevel(wire.level, composeCtx);
+  const plan = composePlan(wire.plan, window, composeCtx);
 
   // ── practice[] — lineage gate (grammar-independent). A sourceId resolves against
   // ANY surviving rendered item — a grammar item id, a vocabulary id, a phrasing id, a
@@ -669,16 +665,23 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   });
 
   // ── stats + integrity ─────────────────────────────────────────────────────────
+  // renderedGrammar = EVERY grammar row (anchored + derived) — what the section lists;
+  // anchoredGrammar = rows with a Cambly correctionId — the only ones inside Σ.
   const renderedGrammar = grammarGroups.reduce((n, g) => n + g.items.length, 0);
+  const anchoredGrammar = grammarGroups.reduce(
+    (n, g) => n + g.items.filter((it) => it.correctionId !== null && it.correctionId !== undefined).length,
+    0,
+  );
+  const derivedGrammar = renderedGrammar - anchoredGrammar;
   const renderedVocab = vocabulary.filter((v) => v.fromCorrectionId != null).length;
   const renderedPhrasing = phrasing.filter((p) => p.fromCorrectionId != null).length;
   const reportedCorrections = rawSigmaSet.size;
   const rejectedCount = rejects.filter((r) => r.dropped).length;
 
-  const sigmaSum = renderedGrammar + renderedVocab + renderedPhrasing;
+  const sigmaSum = anchoredGrammar + renderedVocab + renderedPhrasing;
   if (sigmaSum !== reportedCorrections) {
     throw new BuildIntegrityError(
-      `Σ-invariant failed: reported ${reportedCorrections} !== grammar ${renderedGrammar} + vocab ${renderedVocab} + phrasing ${renderedPhrasing}`,
+      `Σ-invariant failed: reported ${reportedCorrections} !== anchored grammar ${anchoredGrammar} + vocab ${renderedVocab} + phrasing ${renderedPhrasing}`,
     );
   }
 
@@ -687,9 +690,9 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
     // Summed from the lessons (not the rendered cards) so minutes can never drift
     // from classes when a wire class is omitted or duplicated (§10, builder-derived).
     minutes: lessons.reduce((n, l) => n + intOr0(l.minutes), 0),
-    // User-facing count == what the Grammar section lists (beta finding 4), so the header
-    // stat, the index "N fixes" badge, and the section total agree. The raw Cambly-reported
-    // Σ-set size stays in integrity.reportedCorrections (below), never surfaced as a stat.
+    // User-facing count == what the Grammar section lists (beta finding 4) — anchored AND
+    // derived rows — so the header stat, the index "N fixes" badge, and the section total
+    // agree. The raw Cambly-reported Σ-set size stays in integrity.reportedCorrections.
     corrections: renderedGrammar,
     expressions: vocabulary.length,
   };
@@ -708,9 +711,15 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
     grammarGroups,
     phrasing,
     practice,
+    // Optional v2 blocks — present only when the wire supplied a usable one, so an older
+    // wire (and every older VM on disk) keeps exactly the legacy key set.
+    ...(review !== undefined ? { review } : {}),
+    ...(level !== undefined ? { level } : {}),
+    ...(plan !== undefined ? { plan } : {}),
     integrity: {
       reportedCorrections,
       renderedGrammar,
+      derivedGrammar,
       renderedVocab,
       renderedPhrasing,
       rejectedCount,
@@ -762,7 +771,7 @@ export async function generateWeekVM({
     return { weekVM: buildEmptyWeekVM({ window, model, now }), rejectRatio: 0, llmCalls: 0, reprompted: false };
   }
 
-  const bundle = buildWeekBundle(lessons);
+  const bundle = buildWeekBundle(lessons, { weekLabel: window?.weekLabel });
   let llmCalls = 0;
 
   let sum = await summarize({ bundle, model, ...summarizeOpts });

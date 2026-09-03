@@ -1,6 +1,9 @@
 // src/render/week.js — week page assembly (F1 · F4): head boot script, stale
-// banner, header + stat band, sticky chip nav, the six content blocks (five
-// sections; the class log is section 01), footer nav. The reveal mechanic is
+// banner, header + stat band, sticky chip nav, the content sections, footer nav.
+// The sections a week renders — and their "0N" numbers — derive from what the VM
+// carries: Review · Level · Classes · Vocabulary · Grammar · Phrasing · Practice ·
+// Plan, with the three v2 blocks (review / level / plan) optional. An older VM
+// renders exactly the five legacy sections as 01..05. The reveal mechanic is
 // shipped only when the week actually has practice cards.
 
 import { esc } from "./esc.js";
@@ -11,13 +14,16 @@ import {
   banner,
   statBand,
   chipNav,
+  sectionsFor,
   classesSection,
   vocabSection,
   grammarSection,
   phrasingSection,
   practiceSection,
   footerNav,
+  weekLabelSpan,
 } from "./components.js";
+import { reviewSection, levelSection, planSection } from "./sections.js";
 
 const MDOT = "·";
 const LARR = "←";
@@ -31,23 +37,51 @@ function buildResolver(vm) {
   };
 }
 
+const hasText = (v) => typeof v === "string" && v.trim() !== "";
+
+/**
+ * The header's "with …" tutor phrase. Named tutors are listed once each; classes whose
+ * tutor is unknown (empty string) are counted honestly as "N other tutor(s)" rather than
+ * silently dropped — "5 classes with Alex R. and 1 other tutor". No "with" at all when
+ * no class names a tutor.
+ */
+function withTutors(classes) {
+  const named = [...new Set(classes.map((c) => c.tutor).filter(hasText))];
+  if (named.length === 0) return "";
+  const unnamed = classes.filter((c) => !hasText(c.tutor)).length;
+  const others = unnamed ? ` and ${unnamed} other ${pluralize(unnamed, "tutor", "tutors")}` : "";
+  return ` with ${esc(named.join(", "))}${others}`;
+}
+
 function headerBlock(vm) {
   const classes = vm.classes || [];
   const n = classes.length;
-  const tutors = [...new Set(classes.map((c) => c.tutor).filter(Boolean))];
-  const withTutors = tutors.length ? ` with ${esc(tutors.join(", "))}` : "";
   const sub =
-    `${n} ${pluralize(n, "class", "classes")}${withTutors} ${MDOT} ` +
+    `${n} ${pluralize(n, "class", "classes")}${withTutors(classes)} ${MDOT} ` +
     `published ${esc(publishedLabel(vm.publishedAt))} ${MDOT} ` +
     `<a class="backlink" href="../index.html">${LARR} All weeks</a>`;
   return (
     `<header class="pad">` +
     `<span class="eyebrow">● Weekly recap</span>` +
-    `<h1>Week of <span class="accent">${esc(vm.weekLabel)}</span></h1>` +
+    `<h1>Week of <span class="accent">${weekLabelSpan(vm.weekLabel)}</span></h1>` +
     `<p class="sub">${sub}</p>` +
     statBand(vm.stats) +
     `</header>`
   );
+}
+
+/** The section renderers keyed like SECTION_DEFS; each receives its sequential "0N". */
+function sectionRenderers(vm, resolve) {
+  return {
+    review: (num) => reviewSection(vm, resolve, num),
+    level: (num) => levelSection(vm, num),
+    classes: (num) => classesSection(vm.classes, num),
+    vocab: (num) => vocabSection(vm.vocabulary, resolve, num),
+    grammar: (num) => grammarSection(vm.grammarGroups, resolve, num),
+    phrasing: (num) => phrasingSection(vm.phrasing, resolve, num),
+    practice: (num) => practiceSection(vm.practice, resolve, num),
+    plan: (num) => planSection(vm, num),
+  };
 }
 
 /**
@@ -58,18 +92,16 @@ function headerBlock(vm) {
 export function renderWeek(vm, { siteState = {}, prev = null, next = null } = {}) {
   const resolve = buildResolver(vm);
   const hasPractice = Array.isArray(vm.practice) && vm.practice.length > 0;
+  const render = sectionRenderers(vm, resolve);
+  const main = sectionsFor(vm)
+    .map((s) => render[s.key](s.num))
+    .join("");
 
   const body =
     banner(siteState) +
     headerBlock(vm) +
-    chipNav() +
-    `<main>` +
-    classesSection(vm.classes) +
-    vocabSection(vm.vocabulary, resolve) +
-    grammarSection(vm.grammarGroups, resolve) +
-    phrasingSection(vm.phrasing, resolve) +
-    practiceSection(vm.practice, resolve) +
-    `</main>` +
+    chipNav(vm) +
+    `<main>${main}</main>` +
     footerNav(prev, next);
 
   return htmlDocument({

@@ -6,9 +6,12 @@
 // (F7 "fail closed"). These are defense-in-depth re-asserts: the builder's two
 // gates (§3) already ran upstream; the renderer never trusts that they did.
 
+import { BANDS, LEVEL_DIMENSIONS, CONFIDENCE_LEVELS, PLAN_DAYS, LEVEL_ADVICE_MAX, bandIndexOf } from "../coach.js";
+
 export const SCHEMA_VERSION = 1;
 export const MAX_PAGE_BYTES = 200 * 1024; // §F6 charter cap
-export const MAX_CSS_BYTES = 15 * 1024;
+/** Inline CSS cap for STYLES + SECTION_STYLES + CHART_STYLES together (one <style> block). */
+export const MAX_CSS_BYTES = 28 * 1024;
 export const MAX_JS_BYTES = 2 * 1024;
 
 const QUOTE_BY = new Set(["student", "tutor"]);
@@ -71,12 +74,25 @@ export function validateWeek(vm) {
   validateGrammar(vm);
   validatePhrasing(vm);
   validatePractice(vm);
+  // The v2 blocks are OPTIONAL (older VMs lack them); when present their shape is strict.
+  validateReview(vm);
+  validateLevel(vm);
+  validatePlan(vm);
+}
+
+/** An optional ▣ quote: null/undefined means "no quote"; a present one must be non-empty. */
+function checkOptionalQuote(q, at) {
+  if (q !== null && q !== undefined && !isNonEmptyString(q)) fail(`${at} empty (▣)`);
 }
 
 function validateClasses(vm) {
   for (const [i, c] of (vm.classes || []).entries()) {
     if (!isNonEmptyString(c.lessonId)) fail(`week ${vm.weekId}: classes[${i}] missing lessonId`);
     if (!isNonEmptyString(c.startAt)) fail(`week ${vm.weekId}: classes[${i}] missing startAt`);
+    // title is optional (v2): null/undefined, or a non-empty string the card shows in place of the topic.
+    if (c.title !== null && c.title !== undefined && !isNonEmptyString(c.title)) {
+      fail(`week ${vm.weekId}: classes[${i}].title must be null or a non-empty string`);
+    }
     if (c.moment) {
       const { text, quotes } = c.moment;
       if (!isNonEmptyString(text)) fail(`week ${vm.weekId}: classes[${i}].moment.text empty`);
@@ -112,12 +128,83 @@ function validateGrammar(vm) {
       fail(`week ${vm.weekId}: grammarGroups[${gi}] has no items`);
     }
     for (const [ii, it] of g.items.entries()) {
-      if (!isNonEmptyString(it.said)) fail(`week ${vm.weekId}: grammarGroups[${gi}].items[${ii}].said empty (▣)`);
-      if (!isNonEmptyString(it.fix)) fail(`week ${vm.weekId}: grammarGroups[${gi}].items[${ii}].fix empty`);
-      if (!isNonEmptyString(it.correctionId)) {
-        fail(`week ${vm.weekId}: grammarGroups[${gi}].items[${ii}].correctionId required`);
+      const at = `week ${vm.weekId}: grammarGroups[${gi}].items[${ii}]`;
+      if (!isNonEmptyString(it.said)) fail(`${at}.said empty (▣)`);
+      if (!isNonEmptyString(it.fix)) fail(`${at}.fix empty`);
+      // correctionId may be null ONLY on a transcript-derived item (derived:true ⇔ null id).
+      const cid = it.correctionId;
+      if (cid === null || cid === undefined) {
+        if (it.derived !== true) fail(`${at}.correctionId required (only a derived:true item may carry null)`);
+      } else {
+        if (!isNonEmptyString(cid)) fail(`${at}.correctionId invalid`);
+        if (it.derived === true) fail(`${at}: a derived:true item must not carry a correctionId`);
       }
     }
+  }
+}
+
+function validateReview(vm) {
+  const r = vm.review;
+  if (r === undefined || r === null) return;
+  const at = `week ${vm.weekId}: review`;
+  if (typeof r !== "object") fail(`${at} must be an object`);
+  if (!isNonEmptyString(r.summary)) fail(`${at}.summary empty`);
+  if (!Array.isArray(r.wentWell) || !Array.isArray(r.needsWork)) fail(`${at}: wentWell/needsWork must be arrays`);
+  for (const [i, w] of r.wentWell.entries()) {
+    if (!w || !isNonEmptyString(w.point)) fail(`${at}.wentWell[${i}].point empty`);
+    checkOptionalQuote(w.quote, `${at}.wentWell[${i}].quote`);
+  }
+  for (const [i, n] of r.needsWork.entries()) {
+    if (!n || !isNonEmptyString(n.issue)) fail(`${at}.needsWork[${i}].issue empty`);
+    if (!isNonEmptyString(n.fix)) fail(`${at}.needsWork[${i}].fix empty`);
+    checkOptionalQuote(n.quote, `${at}.needsWork[${i}].quote`);
+  }
+}
+
+function validateLevel(vm) {
+  const l = vm.level;
+  if (l === undefined || l === null) return;
+  const at = `week ${vm.weekId}: level`;
+  if (typeof l !== "object") fail(`${at} must be an object`);
+  if (!BANDS.includes(l.overall)) fail(`${at}.overall invalid band ${JSON.stringify(l.overall)}`);
+  if (l.bandIndex !== bandIndexOf(l.overall)) fail(`${at}.bandIndex does not match overall`);
+  if (!CONFIDENCE_LEVELS.includes(l.confidence)) fail(`${at}.confidence invalid`);
+  if (!Array.isArray(l.dimensions) || l.dimensions.length !== LEVEL_DIMENSIONS.length) {
+    fail(`${at}.dimensions must list exactly the ${LEVEL_DIMENSIONS.length} canonical dimensions`);
+  }
+  l.dimensions.forEach((d, i) => {
+    const dat = `${at}.dimensions[${i}]`;
+    if (!d || d.name !== LEVEL_DIMENSIONS[i]) fail(`${dat}.name must be "${LEVEL_DIMENSIONS[i]}" (canonical order)`);
+    if (!BANDS.includes(d.band)) fail(`${dat}.band invalid band`);
+    if (d.bandIndex !== bandIndexOf(d.band)) fail(`${dat}.bandIndex does not match band`);
+    if (typeof d.evidence !== "string") fail(`${dat}.evidence must be a string`);
+  });
+  if (!isNonEmptyString(l.summary)) fail(`${at}.summary empty`);
+  if (!Array.isArray(l.advice) || l.advice.length > LEVEL_ADVICE_MAX) {
+    fail(`${at}.advice must be an array of at most ${LEVEL_ADVICE_MAX}`);
+  }
+  for (const [i, a] of l.advice.entries()) {
+    if (!a || !isNonEmptyString(a.title)) fail(`${at}.advice[${i}].title empty`);
+    if (!isNonEmptyString(a.detail)) fail(`${at}.advice[${i}].detail empty`);
+  }
+}
+
+function validatePlan(vm) {
+  const p = vm.plan;
+  if (p === undefined || p === null) return;
+  const at = `week ${vm.weekId}: plan`;
+  if (typeof p !== "object") fail(`${at} must be an object`);
+  if (!isNonEmptyString(p.weekLabel)) fail(`${at}.weekLabel empty`);
+  if (!isNonEmptyString(p.focus)) fail(`${at}.focus empty`);
+  if (!Array.isArray(p.items) || p.items.length === 0) fail(`${at}.items must be a non-empty array`);
+  for (const [i, it] of p.items.entries()) {
+    if (!it || !PLAN_DAYS.includes(it.day)) fail(`${at}.items[${i}].day invalid`);
+    if (!isNonEmptyString(it.task)) fail(`${at}.items[${i}].task empty`);
+    if (typeof it.why !== "string") fail(`${at}.items[${i}].why must be a string`);
+  }
+  if (!Array.isArray(p.askTutor)) fail(`${at}.askTutor must be an array`);
+  for (const [i, a] of p.askTutor.entries()) {
+    if (!isNonEmptyString(a)) fail(`${at}.askTutor[${i}] empty`);
   }
 }
 
@@ -139,24 +226,39 @@ function validatePractice(vm) {
 /**
  * Σ-invariant re-assert (§10 hard gate, U-RN-⑩). Recomputes the rendered counts from the
  * arrays and enforces two things: (a) the USER-FACING stats.corrections equals the grammar
- * section total (renderedGrammar) so header == section == badge (beta finding 4); and (b)
- * the raw Cambly-reported Σ anchor kept in integrity.reportedCorrections equals
- * renderedGrammar + vocab(fromCorrectionId) + phrasing(fromCorrectionId) — no correction
- * lost or invented. A doctored integrity{} block that disagrees with the recomputed rendered
- * breakdown aborts. Returns the facts (reported = the raw Σ anchor).
+ * section total (renderedGrammar — EVERY row, anchored + transcript-derived) so header ==
+ * section == badge (beta finding 4); and (b) the raw Cambly-reported Σ anchor kept in
+ * integrity.reportedCorrections equals anchoredGrammar (rows WITH a correctionId) +
+ * vocab(fromCorrectionId) + phrasing(fromCorrectionId) — no correction lost or invented.
+ * Derived rows (correctionId null) sit outside Σ. A doctored integrity{} block that
+ * disagrees with the recomputed breakdown aborts. Returns the facts (reported = the raw Σ
+ * anchor).
  */
 export function assertSigma(vm) {
-  const renderedGrammar = (vm.grammarGroups || []).reduce(
-    (sum, g) => sum + (Array.isArray(g.items) ? g.items.length : 0),
-    0,
-  );
+  const items = (vm.grammarGroups || []).flatMap((g) => (Array.isArray(g.items) ? g.items : []));
+  const renderedGrammar = items.length;
+  const anchoredGrammar = items.filter(
+    (it) => it && it.correctionId !== null && it.correctionId !== undefined,
+  ).length;
+  const derivedGrammar = renderedGrammar - anchoredGrammar;
   const renderedVocab = (vm.vocabulary || []).filter(
     (v) => v.fromCorrectionId !== null && v.fromCorrectionId !== undefined,
   ).length;
   const renderedPhrasing = (vm.phrasing || []).filter(
     (p) => p.fromCorrectionId !== null && p.fromCorrectionId !== undefined,
   ).length;
-  const sum = renderedGrammar + renderedVocab + renderedPhrasing;
+  const sum = anchoredGrammar + renderedVocab + renderedPhrasing;
+
+  // Place-once: a correction id may appear in exactly one row across grammar + vocab +
+  // phrasing. A doctored VM that repeats an id keeps the counts consistent, so the
+  // arithmetic below cannot catch it — the ids themselves must be unique.
+  const placed = [
+    ...items.map((it) => it && it.correctionId).filter((id) => id !== null && id !== undefined),
+    ...(vm.vocabulary || []).map((v) => v.fromCorrectionId).filter((id) => id !== null && id !== undefined),
+    ...(vm.phrasing || []).map((p) => p.fromCorrectionId).filter((id) => id !== null && id !== undefined),
+  ];
+  const dup = placed.find((id, i) => placed.indexOf(id) !== i);
+  if (dup !== undefined) fail(`week ${vm.weekId}: Σ mismatch — correction id ${JSON.stringify(dup)} is placed more than once`);
 
   // (a) The header/badge count must equal the Grammar section it labels.
   const statsCorr = vm.stats ? vm.stats.corrections ?? 0 : 0;
@@ -174,17 +276,18 @@ export function assertSigma(vm) {
   if (reported !== sum) {
     fail(
       `week ${vm.weekId}: Σ mismatch — reportedCorrections=${reported} ≠ ` +
-        `grammar ${renderedGrammar} + vocab ${renderedVocab} + phrasing ${renderedPhrasing} = ${sum}`,
+        `anchored grammar ${anchoredGrammar} + vocab ${renderedVocab} + phrasing ${renderedPhrasing} = ${sum}`,
     );
   }
   if (integ && typeof integ === "object") {
     const drift =
       (integ.renderedGrammar !== undefined && integ.renderedGrammar !== renderedGrammar) ||
+      (integ.derivedGrammar !== undefined && integ.derivedGrammar !== derivedGrammar) ||
       (integ.renderedVocab !== undefined && integ.renderedVocab !== renderedVocab) ||
       (integ.renderedPhrasing !== undefined && integ.renderedPhrasing !== renderedPhrasing);
     if (drift) fail(`week ${vm.weekId}: doctored integrity{} block does not match rendered counts`);
   }
-  return { reported, renderedGrammar, renderedVocab, renderedPhrasing, sum };
+  return { reported, renderedGrammar, anchoredGrammar, derivedGrammar, renderedVocab, renderedPhrasing, sum };
 }
 
 /**

@@ -8,6 +8,9 @@
 // Node 22 native fetch, zero npm dependencies. The api.openai.com host is an env
 // seam (OPENAI_BASE_URL) so tests point it at a mock server.
 
+import { weekWindow } from "./week.js";
+import { coachNotes, BANDS, LEVEL_DIMENSIONS, CONFIDENCE_LEVELS, PLAN_DAYS } from "./coach.js";
+
 /** Production defaults for the env seams; read at call time so tests can inject. */
 export function openaiBase() {
   return process.env.OPENAI_BASE_URL || "https://api.openai.com";
@@ -49,62 +52,71 @@ export class SchemaInvalidError extends Error {
 //
 // Strict JSON-schema mode: every property is required, additionalProperties:false,
 // nullable fields expressed as a ["type","null"] union. No numbers, dates, tutor,
-// topic, per-class stats, or correction said/fix appear here — those are builder-core.
+// or per-class stats appear here — those are builder-core. The only verbatim text the
+// LLM authors about the STUDENT (a derived grammar `said`, a review quote) is guarded
+// against the transcript by the builder before it can render.
 
-const CLASS_ITEM = {
-  type: "object",
-  additionalProperties: false,
-  required: ["lessonId", "moment", "tutorNote"],
-  properties: {
-    lessonId: { type: "string" },
-    moment: {
-      type: "object",
-      additionalProperties: false,
-      required: ["text", "quotes"],
-      properties: {
-        text: { type: "string" },
-        quotes: { type: "array", items: { type: "string" } },
-      },
-    },
-    tutorNote: { type: ["string", "null"] },
-  },
-};
+const STR = { type: "string" };
+const NSTR = { type: ["string", "null"] };
+const BAND = { type: "string", enum: [...BANDS] };
 
-const VOCAB_ITEM = {
-  type: "object",
-  additionalProperties: false,
-  required: ["term", "meaning", "quote", "quoteBy", "lessonId", "fromCorrectionId"],
-  properties: {
-    term: { type: "string" },
-    meaning: { type: "string" },
-    quote: { type: "string" },
-    quoteBy: { type: "string", enum: ["student", "tutor"] },
-    lessonId: { type: "string" },
-    fromCorrectionId: { type: ["string", "null"] },
-  },
-};
+/** Strict object helper: every listed property required, nothing else allowed. */
+function obj(properties) {
+  return { type: "object", additionalProperties: false, required: Object.keys(properties), properties };
+}
 
-const GRAMMAR_GROUP = {
-  type: "object",
-  additionalProperties: false,
-  required: ["pattern", "rule", "items"],
-  properties: {
-    pattern: { type: "string" },
-    rule: { type: ["string", "null"] },
-    items: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["correctionId", "why"],
-        properties: {
-          correctionId: { type: "string" },
-          why: { type: "string" },
-        },
-      },
-    },
+const CLASS_ITEM = obj({
+  lessonId: STR,
+  // RULE 12 — a specific 3–7 word title; the builder uses it only for a generic topic.
+  title: STR,
+  moment: obj({ text: STR, quotes: { type: "array", items: STR } }),
+  tutorNote: NSTR,
+});
+
+const VOCAB_ITEM = obj({
+  term: STR,
+  meaning: STR,
+  quote: STR,
+  quoteBy: { type: "string", enum: ["student", "tutor"] },
+  lessonId: STR,
+  fromCorrectionId: NSTR,
+  // RULE 8 — a model sentence, shown by the builder only if no clean verbatim usage survives.
+  example: NSTR,
+});
+
+// RULE 6 — an item is EITHER Cambly-anchored (correctionId set; said/fix/lessonId null,
+// filled from the record) OR transcript-derived (correctionId null; said/fix/lessonId set).
+const GRAMMAR_GROUP = obj({
+  pattern: STR,
+  rule: NSTR,
+  items: {
+    type: "array",
+    items: obj({ correctionId: NSTR, said: NSTR, fix: NSTR, why: STR, lessonId: NSTR }),
   },
-};
+});
+
+const REVIEW = obj({
+  summary: STR,
+  wentWell: { type: "array", items: obj({ point: STR, quote: NSTR, lessonId: NSTR }) },
+  needsWork: { type: "array", items: obj({ issue: STR, fix: STR, quote: NSTR, lessonId: NSTR }) },
+});
+
+const LEVEL = obj({
+  overall: BAND,
+  confidence: { type: "string", enum: [...CONFIDENCE_LEVELS] },
+  dimensions: {
+    type: "array",
+    items: obj({ name: { type: "string", enum: [...LEVEL_DIMENSIONS] }, band: BAND, evidence: STR }),
+  },
+  summary: STR,
+  advice: { type: "array", items: obj({ title: STR, detail: STR }) },
+});
+
+const PLAN = obj({
+  focus: STR,
+  items: { type: "array", items: obj({ day: { type: "string", enum: [...PLAN_DAYS] }, task: STR, why: STR }) },
+  askTutor: { type: "array", items: STR },
+});
 
 const PHRASING_ITEM = {
   type: "object",
@@ -135,18 +147,39 @@ const PRACTICE_ITEM = {
 
 /** The strict wire schema (fresh object each call so a caller can never mutate the shared one). */
 export function wireSchema() {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: ["classes", "vocabulary", "grammarGroups", "phrasing", "practice"],
-    properties: {
+  return structuredClone(
+    obj({
       classes: { type: "array", items: CLASS_ITEM },
       vocabulary: { type: "array", items: VOCAB_ITEM },
       grammarGroups: { type: "array", items: GRAMMAR_GROUP },
       phrasing: { type: "array", items: PHRASING_ITEM },
       practice: { type: "array", items: PRACTICE_ITEM },
-    },
+      review: REVIEW,
+      level: LEVEL,
+      plan: PLAN,
+    }),
+  );
+}
+
+/**
+ * The schema the LOCAL re-validate applies to a 2xx response. Identical to the strict
+ * request schema except that the recap-v2 additions are optional here: the top-level
+ * review / level / plan blocks, classes[].title, vocabulary[].example and the derived-item
+ * fields said / fix / lessonId on grammar items. OpenAI's strict mode already guarantees
+ * the model emits them; locally, a legacy-shaped wire (an older replay, a test double)
+ * still builds because the builder treats every one of those fields as optional. Types,
+ * enums and additionalProperties:false stay fully enforced.
+ */
+export function acceptanceSchema() {
+  const s = wireSchema();
+  const relax = (node, keys) => {
+    node.required = node.required.filter((k) => !keys.includes(k));
   };
+  relax(s, ["review", "level", "plan"]);
+  relax(s.properties.classes.items, ["title"]);
+  relax(s.properties.vocabulary.items, ["example"]);
+  relax(s.properties.grammarGroups.items.properties.items.items, ["said", "fix", "lessonId"]);
+  return s;
 }
 
 // ── Minimal JSON-schema-subset validator (type/enum/required/properties/items) ──
@@ -203,86 +236,187 @@ export function validateAgainstSchema(value, schema, path = "$") {
 // ── Prompt assembly ──────────────────────────────────────────────────────────
 
 export const RULES = [
-  "You are the recap writer for a weekly English-tutoring digest. You receive the",
-  "student's real Cambly lessons for one week: verbatim transcripts (speaker-tagged),",
-  "the tutor's typed chat, and the tutor's corrective-feedback records (each with a",
-  "stable id). Produce ONLY the JSON object described by the response schema.",
+  "You are the recap writer and speaking coach for a weekly English-tutoring digest. You",
+  "receive the student's real Cambly lessons for one week: verbatim transcripts (speaker-",
+  "tagged, merged into whole turns), the tutor's typed chat, the tutor's corrective-feedback",
+  "records (each with a stable id), and Cambly's own coach notes per class. Produce ONLY",
+  "the JSON object described by the response schema.",
   "",
   "Hard rules — every one is later machine-verified; a violation drops the item:",
   "1. NEVER invent content. You may only choose, group, explain, and quote lines that",
-  "   actually appear in the supplied transcripts, chat, or feedback.",
+  "   actually appear in the supplied material. QUOTABLE lines are ONLY the Transcript, Chat",
+  "   and Tutor notes lines of each class. The Corrections records, the \"Cambly coach —\"",
+  "   notes and the \"Tutor's suggested next lesson\" line are evidence to draw on and",
+  "   paraphrase, never to quote — a quote copied from them is rejected by the verifier.",
   "2. Every quote field (each classes[].moment.quotes entry, every vocabulary.quote,",
-  "   every phrasing.said) MUST be copied character-for-character from a single supplied",
-  "   line — never stitched across two turns, never paraphrased. quoteBy must name the",
-  "   speaker who actually said it (student or tutor). For a vocabulary item, choose as its",
-  "   quote a natural line that actually CONTAINS the term (a real usage) — not a dictionary",
-  "   definition, a question about the word, or an ASR-garbled form; if no supplied line uses",
-  "   the term, omit the quote and the builder will show the word without an example.",
+  "   every phrasing.said, every derived grammar said, every review quote) MUST be copied",
+  "   character-for-character from a single supplied line — never stitched across two",
+  "   turns, never paraphrased (capitalising the first word is tolerated). quoteBy must name",
+  "   the speaker who actually said it (student or tutor). For a vocabulary item, choose as",
+  "   its quote a natural line that actually CONTAINS the term (a real usage) — not a",
+  "   dictionary definition, a question about the word, or an ASR-garbled form.",
   "3. Every correction id must be placed EXACTLY ONCE across the whole output — as a",
   "   grammarGroups item (correctionId), or as one vocabulary.fromCorrectionId, or as one",
   "   phrasing.fromCorrectionId. A correction that teaches both a word and a phrasing goes",
   "   in exactly one section. vocabulary and phrasing carry at most one fromCorrectionId.",
-  "   For grammar items you return only correctionId + why — the corrected wording is filled",
-  "   from the record, so do not restate it.",
+  "   For a Cambly-anchored grammar item return correctionId + why with said/fix/lessonId",
+  "   null — the corrected wording is filled from the record, so do not restate it.",
   "4. Group grammar by the recurring pattern behind the mistakes; label each group with a",
   "   short, human-readable title (e.g. \"Past tense\", \"Purpose & infinitives\") — never a",
   "   slug, code token, or bare punctuation — and give each group a one-line, plain-words",
-  "   rule a learner can remember.",
+  "   rule a learner can remember. Every grammar item's why explains the rule behind the",
+  "   CHANGE (what was wrong and why the fix is right) in at most 20 words — never a remark on",
+  "   what was already correct, never praise.",
   "5. Emit exactly 8 practice items (FILL_THE_GAP | CORRECT_IT | SAY_IT_BETTER) built from",
   "   this week's real material — the grammar corrections AND the vocabulary and phrasing you",
   "   surfaced above. A week with no corrections still gets 8 items drawn from its vocabulary",
   "   and phrasing. Use ____ to mark the gap in a prompt and **x** to mark the highlighted",
   "   answer span. Every practice item's sourceIds must be non-empty: cite a real correction",
   "   id from the bundle when the drill comes from a correction, otherwise cite the lessonId",
-  "   the vocabulary or phrasing came from.",
+  "   the material came from (transcript-derived drills cite the lessonId).",
+  "6. Grammar from the transcript. When Cambly supplies few or no correction records, spot",
+  "   real grammar errors in the STUDENT's own spontaneous speech — never in a read-aloud",
+  "   passage, never ASR garble. For each: said = the SHORTEST verbatim student span (at most",
+  "   25 words) that contains the error, copied character-for-character from ONE supplied line",
+  "   (case may differ); fix = the minimal correction (same meaning, same words otherwise);",
+  "   why = the rule behind the change, at most 20 words (rule 4); correctionId null; lessonId set.",
+  "   At most 12 derived items, grouped into at most 5 recurring patterns (e.g. \"Articles\",",
+  "   \"Past tense\", \"Plural -s\", \"Word order\"), most frequent first. Cambly-anchored items keep",
+  "   their correctionId with said/fix/lessonId null.",
+  "7. Phrasing: at most 8 items; said is the shortest verbatim span (at most 25 words) that",
+  "   carries the issue; better keeps the student's meaning; why explains the rule behind the",
+  "   change in at most 20 words and never comments on what was already correct; skip",
+  "   anything already covered by a grammar item.",
+  "8. Vocabulary: 6–10 items, including words the tutor typed in chat. quote must contain the",
+  "   term (a real usage). If no supplied line uses the term naturally, still emit quote as",
+  "   the closest line but ALSO give example — a short natural model sentence (at most 14",
+  "   words) using the term; otherwise example is null. The builder shows example only when",
+  "   the quote is not a clean usage. meaning: at most 12 learner-friendly words.",
+  "9. Review: summary = 3–5 sentences about THIS week (topics, what improved, the 1–2 biggest",
+  "   issues). wentWell = 2–4 points, each with an optional verbatim quote (either speaker)",
+  "   and its lessonId. needsWork = 3–6 items: issue (short label + one clause), fix (what to",
+  "   do instead, at most 25 words), an optional verbatim STUDENT quote and its lessonId. Draw",
+  "   on the Cambly coach notes and the tutors' suggested next lessons where they agree with",
+  "   the transcript evidence — paraphrase them; they are not quotable lines (rule 1).",
+  "10. Level (CEFR): judge SPONTANEOUS speech only (ignore read-aloud passages). Use the CEFR",
+  "   qualitative aspects of spoken language — range (vocabulary/structures available),",
+  "   accuracy (grammar control, error density, whether errors impede meaning), fluency (pace,",
+  "   pauses, self-repair; the wpm/talk stats are evidence, not a verdict), interaction",
+  "   (initiating, responding, asking, turn-taking), coherence (linking ideas, organising longer",
+  "   turns). Band descriptors, condensed: A2 = short simple turns, frequent basic errors, needs",
+  "   support; B1 = keeps going on familiar topics, reasonably accurate simple structures,",
+  "   noticeable errors under pressure, simple connectors; B1+ = B1 with longer turns and wider",
+  "   vocabulary but systematic slips (articles, tense, agreement); B2 = clear detailed turns on",
+  "   abstract/technical topics, good control with occasional non-systematic slips, natural",
+  "   pace, flexible interaction; B2+ = B2 with few errors and idiomatic range; C1 = fluent,",
+  "   spontaneous, precise, errors rare. Give exactly one entry per dimension (range, accuracy,",
+  "   fluency, interaction, coherence) with ONE line of concrete evidence each, an overall",
+  "   holistic band, confidence (low if fewer than 3 classes or mostly read-aloud), a 2–3",
+  "   sentence summary (why this band; what separates it from the next band), and exactly 3",
+  "   advice items (title + detail, at most 40 words) targeted at reaching the next band.",
+  "11. Plan: a concrete 7-day plan for the week AFTER this one. focus = one sentence; 5–7 items",
+  "   (day Mon..Sun or \"Daily\"; task at most 25 words, doable in 10–20 minutes, grounded in",
+  "   THIS week's errors, vocabulary and tutor suggestions; why at most 15 words); 2–3 askTutor",
+  "   requests for the next class (e.g. \"Ask Alex to stop you on every missing article\").",
+  "12. Titles: classes[].title = a specific 3–7 word title of what the class was about (e.g.",
+  "   \"Lunch breaks & indoor workdays\"), never \"Pro Lesson\" or another generic label.",
+  "13. Tutor notes: classes[].tutorNote = the tutor's OWN closing remark, copied verbatim from",
+  "   that class's Tutor notes or Chat lines (e.g. \"Great energy today, see you Thursday!\"),",
+  "   or null when the tutor left none — never a topic summary, never your own words.",
 ].join("\n");
 
+/** Transcript listing: merged `segments` when the normalizer supplied them, else raw lines. */
 function speakerTranscript(lesson) {
-  return lesson.transcript
-    .map((t, i) => `  [${i + 1}] (${t.speaker}) ${t.text}`)
-    .join("\n");
+  const lines = Array.isArray(lesson.segments) && lesson.segments.length ? lesson.segments : lesson.transcript || [];
+  if (!lines.length) return "  (none)";
+  return lines.map((t, i) => `  [${i + 1}] (${t.speaker}) ${t.text}`).join("\n");
+}
+
+/** The Cambly coach's notes for one class, worksheet-stripped (strict for the drill-prone fields). */
+function coachLines(lesson) {
+  const c = coachNotes(lesson.aiTutorFeedback);
+  const or = (v) => (typeof v === "string" && v.trim() ? v : "(none)");
+  return [
+    `Cambly coach — what went well: ${or(c.didWell)}`,
+    `Cambly coach — work on: ${or(c.workOn)}`,
+    `Cambly coach — practice ideas: ${or(c.practiceIdeas)}`,
+    `Tutor's suggested next lesson: ${or(c.nextLesson)}`,
+  ].join("\n");
+}
+
+const READ_ALOUD_NOTE =
+  'Note: in "Pro Lesson" classes the student READS AN ARTICLE ALOUD for part of the class — ' +
+  "those long, formal student turns are not the student's own production. Judge level, " +
+  "grammar and phrasing on spontaneous speech only.";
+
+/** The bundle's first lines: week label, class count, tutors, and the read-aloud caveat. */
+function weekHeader(lessons, weekLabel) {
+  const names = [...new Set(lessons.map((l) => l.tutor).filter((t) => typeof t === "string" && t.trim()))];
+  const tutors = names.length ? names.join(", ") : "unknown";
+  const label =
+    weekLabel ??
+    (lessons.length && lessons[0].startAtCST && Number.isFinite(Date.parse(lessons[0].startAtCST))
+      ? weekWindow(Date.parse(lessons[0].startAtCST)).weekLabel
+      : "?");
+  const n = lessons.length;
+  return `## Week of ${label} — ${n} ${n === 1 ? "class" : "classes"} · tutors: ${tutors}\n${READ_ALOUD_NOTE}`;
+}
+
+/** "84 wpm · 52% talk · 593 unique words" from the lesson's Cambly stats (? when absent). */
+function statsMeta(lesson) {
+  const s = lesson.stats || {};
+  const n = (v) => (Number.isFinite(v) ? Math.round(v) : "?");
+  return `${n(s.wpm)} wpm · ${n(s.talkRatio)}% talk · ${n(s.uniqueWords)} unique words`;
 }
 
 function correctionLines(lesson) {
-  if (!lesson.corrections.length) return "  (none)";
-  return lesson.corrections
+  const corrections = Array.isArray(lesson.corrections) ? lesson.corrections : [];
+  if (!corrections.length) return "  (none)";
+  return corrections
     .map((c) => `  ${c.id} · "${c.said ?? ""}" -> "${c.fix ?? ""}" · ${c.why ?? ""}`)
     .join("\n");
 }
 
 function chatLines(lesson) {
-  if (!lesson.chat.length) return "  (none)";
-  return lesson.chat.map((m) => `  (${m.from}) ${m.text}`).join("\n");
+  const chat = Array.isArray(lesson.chat) ? lesson.chat : [];
+  if (!chat.length) return "  (none)";
+  return chat.map((m) => `  (${m.from}) ${m.text}`).join("\n");
 }
 
-/** The compact user-message bundle: one block per lesson (meta · transcript · corrections · notes · chat). */
-export function buildWeekBundle(lessons) {
+/**
+ * The compact user-message bundle: a week header, then one block per lesson (meta with
+ * the Cambly stats · transcript as merged turns · corrections · tutor notes · chat · the
+ * Cambly coach's four notes). Pure; lessons are ordered chronologically.
+ * @param {object[]} lessons normalized lessons
+ * @param {{weekLabel?:string|null}} [opts] the week's display label (derived from the first lesson when absent)
+ * @returns {string}
+ */
+export function buildWeekBundle(lessons, { weekLabel = null } = {}) {
   const ordered = [...lessons].sort((a, b) =>
     String(a.startAtCST).localeCompare(String(b.startAtCST)) ||
     String(a.lessonId).localeCompare(String(b.lessonId)),
   );
-  return ordered
-    .map((lesson, idx) => {
-      const meta =
-        `### Class ${idx + 1} — ${lesson.weekday ?? "?"} ${lesson.startAtCST ?? "?"} · ` +
-        `${lesson.minutes ?? "?"} min · Tutor: ${lesson.tutor ?? "?"} · ` +
-        `Topic: ${lesson.topic ?? "?"} · lessonId: ${lesson.lessonId}`;
-      const notes = lesson.tutorNotes.length
-        ? lesson.tutorNotes.map((n) => `  - ${n}`).join("\n")
-        : "  (none)";
-      return [
-        meta,
-        "Transcript:",
-        speakerTranscript(lesson),
-        "Corrections (id · said -> fix · why):",
-        correctionLines(lesson),
-        "Tutor notes:",
-        notes,
-        "Chat:",
-        chatLines(lesson),
-      ].join("\n");
-    })
-    .join("\n\n");
+  const blocks = ordered.map((lesson, idx) => {
+    const meta =
+      `### Class ${idx + 1} — ${lesson.weekday ?? "?"} ${lesson.startAtCST ?? "?"} · ` +
+      `${lesson.minutes ?? "?"} min · Tutor: ${lesson.tutor ?? "?"} · ` +
+      `Topic: ${lesson.topic ?? "?"} · lessonId: ${lesson.lessonId} · ${statsMeta(lesson)}`;
+    const tutorNotes = Array.isArray(lesson.tutorNotes) ? lesson.tutorNotes : [];
+    const notes = tutorNotes.length ? tutorNotes.map((n) => `  - ${n}`).join("\n") : "  (none)";
+    return [
+      meta,
+      "Transcript:",
+      speakerTranscript(lesson),
+      "Corrections (id · said -> fix · why):",
+      correctionLines(lesson),
+      "Tutor notes:",
+      notes,
+      "Chat:",
+      chatLines(lesson),
+      coachLines(lesson),
+    ].join("\n");
+  });
+  return [weekHeader(ordered, weekLabel), ...blocks].join("\n\n");
 }
 
 /** A corrective re-prompt appendix listing the quotes the guard rejected on the previous try. */
@@ -293,8 +427,9 @@ export function correctiveMessage(rejections) {
     "matches of any supplied line and were rejected:",
     ...lines,
     "",
-    "Re-emit the full JSON. For each rejected item, either copy an exact line from the",
-    "bundle (correct speaker) or omit that item. Do not invent or paraphrase.",
+    "Re-emit the full JSON. For each rejected item, either copy an exact Transcript, Chat or",
+    "Tutor notes line from the bundle (correct speaker) or omit that item. Do not invent or",
+    "paraphrase, and never quote the Cambly coach notes or the correction records.",
   ].join("\n");
 }
 
@@ -437,7 +572,7 @@ export async function summarizeWeek({
       break;
     }
 
-    const schemaErrors = validateAgainstSchema(wire, wireSchema());
+    const schemaErrors = validateAgainstSchema(wire, acceptanceSchema());
     if (schemaErrors.length) {
       lastSchema = new SchemaInvalidError(`OpenAI response failed wire schema (${schemaErrors.length} errors)`, {
         errors: schemaErrors,

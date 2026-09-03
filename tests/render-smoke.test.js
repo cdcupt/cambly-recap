@@ -11,7 +11,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 import { renderWeek } from "../src/render/week.js";
-import { goldenWeek } from "./render-fixtures.js";
+import { goldenWeek, goldenWeekV2 } from "./render-fixtures.js";
 
 let chromium = null;
 try {
@@ -135,6 +135,39 @@ function emitStress() {
   fs.writeFileSync(file, renderWeek(stressWeek()));
   return "file://" + file;
 }
+
+// recap v2: the eight-section page (review · level · plan on top of the legacy five) must
+// hold the 320px paper column too — the level track, the two-column review band and the
+// plan checklist all have to wrap, never widen the page.
+function emitV2() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cr-v2-"));
+  const file = path.join(dir, "week.html");
+  fs.writeFileSync(file, renderWeek(goldenWeekV2()));
+  return "file://" + file;
+}
+
+test("F6 responsive (v2): all eight sections render with no horizontal scroll at 320 / 390 / 1440 and the level band is visible", guard, async () => {
+  if (!chromium) return;
+  const url = emitV2();
+  const browser = await chromium.launch();
+  try {
+    for (const width of [320, 390, 1440]) {
+      const page = await browser.newPage({ viewport: { width, height: 800 } });
+      await page.goto(url);
+      const { scrollW, clientW } = await page.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+      }));
+      assert.ok(scrollW <= clientW + 1, `no overflow at ${width}px (scrollWidth ${scrollW} vs clientWidth ${clientW})`);
+      assert.equal(await page.locator("section").count(), 8, "eight sections");
+      assert.ok(await page.locator(".lvbig").isVisible(), "level band visible");
+      assert.equal(await page.locator(".dim").count(), 5, "five dimension rows");
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
 
 test("F6 defensive: a 136-char unbroken token in every field still never overflows at 320 / 390 / 1440", guard, async () => {
   if (!chromium) return;

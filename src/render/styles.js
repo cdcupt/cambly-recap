@@ -5,8 +5,9 @@
 // only additions over the mockup are the responsive column (2×2 → 1×4 stats, a
 // centered ≤760px paper sheet), the no-JS / print answer-sheet fallback, the
 // always-visible server-rendered banner, the muted zero-item note, the honest-
-// semantics empty index row (a <span>, styled to match the mockup's <a>), and a
-// universal :focus-visible ring. Single string, byte-budgeted ≤ 15 KB (F6).
+// semantics empty index row (a <span>, styled to match the mockup's <a>), the
+// wrapping chip nav (eight chips no longer fit one phone-width row), the non-breaking
+// week label and a universal :focus-visible ring. Single string, byte-budgeted ≤ 15 KB (F6).
 
 export const STYLES = `
 /* ============ tokens + product mockup styles — lifted from DESIGN.html .mk ============ */
@@ -37,11 +38,12 @@ export const STYLES = `
 .mk .stat{background:var(--surface);border:1px solid var(--mline-soft);border-radius:13px;padding:11px 12px 9px;box-shadow:0 1px 2px rgba(27,24,19,.05),0 6px 20px rgba(27,24,19,.06)}
 .mk .stat .n{font-family:var(--disp);font-size:1.42rem;line-height:1;color:var(--acc)}
 .mk .stat .l{font-size:.68rem;color:var(--mmuted);margin-top:5px;letter-spacing:.03em;text-transform:uppercase;font-weight:600}
-.mk nav.chips{position:sticky;top:0;z-index:9;background:rgba(247,242,234,.92);backdrop-filter:blur(8px);border-block:1px solid var(--mline-soft);overflow-x:auto;white-space:nowrap;scrollbar-width:none}
-.mk nav.chips::-webkit-scrollbar{display:none}
-.mk nav.chips a{display:inline-block;text-decoration:none;color:var(--ink-soft);font-size:.78rem;font-weight:700;padding:12px 10px;transition:color .2s var(--ease)}
-.mk nav.chips a:first-child{padding-left:16px}
+/* Chips wrap (two rows on phones), never a hidden-scroll row; ≥44px tap targets. */
+.mk nav.chips{position:sticky;top:0;z-index:9;display:flex;flex-wrap:wrap;padding:0 6px;background:rgba(247,242,234,.92);backdrop-filter:blur(8px);border-block:1px solid var(--mline-soft)}
+.mk nav.chips a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;text-decoration:none;color:var(--ink-soft);font-size:.78rem;font-weight:700;padding:8px 10px;white-space:nowrap;transition:color .2s var(--ease)}
 .mk nav.chips a:hover,.mk nav.chips a:focus-visible{color:var(--acc-ink)}
+/* Week labels (≤16 chars) never break at the spaced en dash. */
+.mk .nowrap{white-space:nowrap;overflow-wrap:normal;word-break:normal}
 .mk section{padding:22px 0 4px}
 .mk h2{font-family:var(--disp);font-weight:600;font-size:1.28rem;letter-spacing:-.005em;margin:0 0 2px;display:flex;align-items:baseline;gap:8px;border:0;padding-top:0}
 .mk h2 .num{font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:.72rem;color:var(--acc);font-weight:800;letter-spacing:.08em}
@@ -49,8 +51,10 @@ export const STYLES = `
 .mk .empty-note{color:var(--mmuted);font-size:.85rem;font-style:italic;margin:6px 0 10px}
 .mk .ccard{background:var(--surface);border:1px solid var(--mline-soft);border-radius:14px;padding:14px 15px 12px;margin:10px 0;box-shadow:0 1px 2px rgba(27,24,19,.05),0 6px 20px rgba(27,24,19,.06)}
 .mk .ccard .day{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.mk .ccard .day b{font-family:var(--disp);font-size:1.02rem}
+.mk .ccard .day b{font-size:.78rem;font-weight:700;color:var(--ink-soft);letter-spacing:.01em}
 .mk .ccard .day span{font-size:.72rem;color:var(--mmuted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.mk .ccard .ctitle{font-family:var(--disp);font-weight:600;font-size:1.08rem;line-height:1.3;letter-spacing:-.005em;color:var(--mink);margin:3px 0 0}
+.mk .ccard.nohead .day b{font-family:var(--disp);font-size:1.02rem;font-weight:600;color:var(--mink);letter-spacing:0}
 .mk .ccard .cstats{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}
 .mk .ccard .cstats i{font-style:normal;font-size:.7rem;font-weight:700;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:2px 8px}
 .mk .moment{font-size:.85rem;color:var(--ink-soft);margin:6px 0 0}
@@ -61,6 +65,9 @@ export const STYLES = `
 .mk .focus>:last-child{margin-bottom:0}
 .mk .focus .fhead{font-size:.62rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--teal);margin-bottom:6px}
 .mk .focus .fai{font-size:.82rem;color:var(--ink-soft);margin:0 0 7px}
+/* Cambly's "what we can work on" — coaching prose (worksheets stripped), accent-edged like a note. */
+.mk .focus .fwork{font-size:.82rem;color:var(--ink-soft);margin:0 0 8px;padding:6px 10px;border-left:3px solid var(--acc);background:var(--surface);border-radius:0 8px 8px 0}
+.mk .focus .fwork b{display:block;font-size:.6rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:2px}
 .mk .focus .fnote{margin:0 0 8px}
 .mk .focus .fnote .en{font-size:.82rem;color:var(--mink);margin:0}
 .mk .focus .fnote .zh{font-size:.8rem;color:var(--mmuted);margin:2px 0 0}
@@ -72,6 +79,8 @@ export const STYLES = `
 .mk .vword .w b{font-family:var(--disp);font-size:1rem;color:var(--acc-ink)}
 .mk .vword .w em{font-style:normal;font-size:.8rem;color:var(--ink-soft)}
 .mk .vq{font-size:.8rem;color:var(--mmuted);font-style:italic;margin:4px 0 0}
+/* Model sentence shown only when no clean verbatim usage survived (never both). */
+.mk .veg{font-size:.8rem;color:var(--mmuted);margin:4px 0 0}
 .mk .daychip{font-style:normal;font-size:.62rem;font-weight:800;letter-spacing:.06em;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:2px 7px;vertical-align:middle}
 .mk .grp{margin:14px 0 6px}
 .mk .grp h3{font-size:.9rem;margin:0 0 2px;display:flex;align-items:center;gap:7px}
@@ -82,6 +91,8 @@ export const STYLES = `
 .mk .corr .fix{color:var(--good-ink);font-weight:600}
 .mk .corr .why{display:block;font-size:.76rem;color:var(--mmuted);margin-top:3px}
 .mk .corr .arr{color:var(--mmuted)}
+/* Source tag on a row the recap spotted in the transcript (not a Cambly correction record). */
+.mk .corr .src{font-style:normal;font-size:.58rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:1px 6px;margin-left:6px;vertical-align:middle;white-space:nowrap}
 .mk details.more>summary{cursor:pointer;list-style:none;display:inline-block;font-size:.74rem;font-weight:700;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:6px 12px;margin:4px 0;min-height:30px}
 .mk details.more>summary::-webkit-details-marker{display:none}
 .mk details.more>summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
@@ -130,8 +141,10 @@ export const STYLES = `
 .ix ul.weeks a.wrow:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .ix .wl{flex:1;min-width:0}
 .ix .wl b{font-family:var(--disp);font-size:.95rem;font-weight:600;display:block}
-.ix .wl span{font-size:.74rem;color:var(--mmuted)}
+.ix .wl>span{font-size:.74rem;color:var(--mmuted)}
 .ix .wc{font-size:.7rem;font-weight:800;color:var(--acc-ink);background:var(--acc-wash);border-radius:99px;padding:3px 9px;white-space:nowrap}
+/* v1 week with no Cambly correction records — a fact, not a score. */
+.ix .wc.muted{color:var(--ink-soft);background:var(--surface2);border:1px solid var(--mline-soft);font-weight:700}
 .ix li.latest .wrow{border-color:rgba(216,74,27,.4);border-width:1.5px}
 .ix li.latest .new{font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#fff;background:var(--acc);border-radius:99px;padding:2px 7px;margin-left:6px;vertical-align:middle}
 .ix li.empty .wrow{background:transparent;border-style:dashed;box-shadow:none;color:var(--mmuted)}
@@ -149,7 +162,7 @@ body.mk{max-width:760px;margin:0 auto;min-height:100vh;box-shadow:0 0 40px rgba(
 main{display:block}
 /* Defensive wrap: no long unbroken token (URL, pasted greeting, code) may force
    horizontal scroll at 320px. Every text-bearing container breaks long words. */
-.mk .sub,.mk .ccard .day span,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl span{overflow-wrap:anywhere;word-break:break-word}
+.mk .sub,.mk .ccard .day span,.mk .ccard .ctitle,.mk .moment,.mk .tnote,.mk .focus .fai,.mk .focus .fwork,.mk .focus .fnote .en,.mk .focus .fnote .zh,.mk .focus .fnext span,.mk .vword .w b,.mk .vword .w em,.mk .vq,.mk .veg,.mk .grp h3,.mk .rule,.mk .corr,.mk .corr .said,.mk .corr .fix,.mk .corr .why,.mk .up,.mk .ptag,.mk .ptext,.mk .pa .ans,.mk .pa .why,.mk .empty-note,.ix .wl b,.ix .wl>span{overflow-wrap:anywhere;word-break:break-word}
 /* Flex text cells must be allowed to shrink below their content width to wrap. */
 .mk .ccard .day,.mk .vword .w,.mk .grp h3,.mk .focus .fnext{min-width:0}
 .mk a:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
