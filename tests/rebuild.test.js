@@ -327,6 +327,33 @@ test("runRebuild: a summarizer failure → fetch-failed, exit 2, no VM, no rende
   assert.equal(entry.error, "OpenAIError: OpenAI HTTP 500");
 });
 
+test("regression (Codex PR #4): a multi-week rebuild is all-or-nothing — a later week's failure leaves NO earlier VM written or rewritten", async () => {
+  const dirs = seed();
+  const s = seams();
+  const earlier = weekWindow(WEEK.startMs - 7 * MS_DAY).weekId; // no raw lessons → would become a stub (zero LLM)
+  const boom = async () => {
+    throw Object.assign(new Error("OpenAI HTTP 500"), { name: "OpenAIError" });
+  };
+
+  // (a) Nothing on disk yet: the stub week succeeds first, the lesson week fails → neither VM appears.
+  const r1 = await rebuild(dirs, s, { weekIds: [earlier, WEEK.weekId], summarize: boom });
+  assert.equal(r1.exitCode, 2);
+  assert.deepEqual(r1.weeksBuilt, [], "no week counts as built");
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks", `${earlier}.json`)), false, "the earlier week's stub was NOT written");
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks", `${WEEK.weekId}.json`)), false);
+  assert.equal(fs.existsSync(path.join(dirs.siteDir, "index.html")), false, "no render");
+
+  // (b) A previously published VM stays byte-identical when a sibling week fails in the same run.
+  assert.equal((await rebuild(dirs, s)).exitCode, 0);
+  const vmPath = path.join(dirs.dataDir, "weeks", `${WEEK.weekId}.json`);
+  const before = fs.readFileSync(vmPath, "utf8");
+  // `earlier` needs no LLM call (a stub) and succeeds; WEEK's one LLM call fails → the run must roll back everything.
+  const r2 = await rebuild(dirs, s, { weekIds: [WEEK.weekId, earlier], summarize: boom });
+  assert.equal(r2.exitCode, 2);
+  assert.equal(fs.readFileSync(vmPath, "utf8"), before, "the published VM is byte-identical");
+  assert.equal(fs.existsSync(path.join(dirs.dataDir, "weeks", `${earlier}.json`)), false, "the sibling stub was not written either");
+});
+
 // ── --render ──────────────────────────────────────────────────────────────────
 
 test("runRender re-renders offline with zero LLM and zero network, healing tutors from data/tutors.json", async () => {

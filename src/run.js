@@ -602,8 +602,7 @@ async function rebuildWeek(w, ctx) {
   }
   log(`rebuild ${w}: ${lessons.length} lesson(s) from data/raw`);
   const out = await gen({ window: weekWindow(weekIdToStartMs(w)), lessons });
-  writeWeekVM(dataDir, w, out.weekVM, fsImpl);
-  return out.weekVM;
+  return out.weekVM; // staged by runRebuild — nothing is written until EVERY week succeeded
 }
 
 /**
@@ -641,12 +640,14 @@ export async function runRebuild(opts = {}) {
       generateWeekVM({ window, lessons, now: nowMs, summarize, fetchImpl, ...llm, ...fast });
     stage = "summarize";
     for (const w of weekIds) {
-      const vm = await rebuildWeek(w, { dataDir, fsImpl, uid, tutorsMap, rawLessons, gen, log });
+      built.set(w, await rebuildWeek(w, { dataDir, fsImpl, uid, tutorsMap, rawLessons, gen, log }));
+    }
+    stage = "build"; // all-or-nothing (Codex, PR #4): staged VMs are written only once EVERY week succeeded
+    for (const [w, vm] of built) {
+      writeWeekVM(dataDir, w, vm, fsImpl);
       weeksBuilt.push(w);
-      built.set(w, vm);
       rejects += vm.integrity?.rejectedCount ?? 0;
     }
-    stage = "build";
     tutorsPatched = patchTutorNames({ dataDir, fsImpl, tutorsMap, log });
     buildSite({ dataDir, siteDir, nowMs, fsImpl }); // validates, swaps, writes healthz LAST
     const allEmpty = [...built.values()].every((vm) => vm.isEmpty === true);
