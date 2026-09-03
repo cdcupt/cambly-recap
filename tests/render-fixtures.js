@@ -155,7 +155,7 @@ export function goldenWeekV2(overrides = {}) {
         ...c1,
         topic: "Pro Lesson", // generic → the LLM title stands in on the card
         title: "Lunch breaks & indoor workdays <script>t()</script>", // XSS probe
-        tutor: "Niki V.",
+        tutor: "Alex R.",
         tutorFocus: {
           aiFeedback: "You kept a long story in the past tense without prompting.",
           workOn: "Put the article before every singular count noun <script>w()</script>", // XSS probe
@@ -164,7 +164,7 @@ export function goldenWeekV2(overrides = {}) {
           nextFocus: "Articles in technical explanations",
         },
       },
-      { ...c2, title: null, tutor: "Niki V." },
+      { ...c2, title: null, tutor: "Alex R." },
     ],
     vocabulary: [
       ...base.vocabulary,
@@ -243,7 +243,7 @@ export function goldenWeekV2(overrides = {}) {
         { day: "Sun", task: "Review the six vocabulary cards and use each in one sentence.", why: "Six new expressions this week." },
       ],
       askTutor: [
-        "Ask Niki to stop you on every missing article.",
+        "Ask Alex to stop you on every missing article.",
         "Ask for one read-aloud paragraph, then a retell without the text <script>at()</script>.", // XSS probe
       ],
     },

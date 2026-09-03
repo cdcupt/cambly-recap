@@ -535,8 +535,8 @@ test(
 // ── tutors map (spec A1): {id: {id, displayName}} from either endpoint shape ──
 
 test("normalizeTutors flattens the live object-map payload {result: {id: record}}", () => {
-  const map = normalizeTutors({ result: { t1: { id: "t1", displayName: "Niki V.", country: "US", rating: 4.9 } } });
-  assert.deepEqual(map, { t1: { id: "t1", displayName: "Niki V." } });
+  const map = normalizeTutors({ result: { t1: { id: "t1", displayName: "Alex R.", country: "US", rating: 4.9 } } });
+  assert.deepEqual(map, { t1: { id: "t1", displayName: "Alex R." } });
 });
 
 test("normalizeTutors flattens the array payload, keying by id or _id.$oid and deriving the name", () => {
@@ -557,8 +557,8 @@ test("normalizeTutors flattens the array payload, keying by id or _id.$oid and d
 });
 
 test("normalizeTutors accepts an already-flat map (string values too) and yields {} for nothing usable", () => {
-  assert.deepEqual(normalizeTutors({ t1: "Niki V." }), { t1: { id: "t1", displayName: "Niki V." } });
-  assert.deepEqual(normalizeTutors({ t1: { id: "t1", displayName: "Niki V." } }), { t1: { id: "t1", displayName: "Niki V." } });
+  assert.deepEqual(normalizeTutors({ t1: "Alex R." }), { t1: { id: "t1", displayName: "Alex R." } });
+  assert.deepEqual(normalizeTutors({ t1: { id: "t1", displayName: "Alex R." } }), { t1: { id: "t1", displayName: "Alex R." } });
   assert.deepEqual(normalizeTutors(undefined), {});
   assert.deepEqual(normalizeTutors({ result: [] }), {});
   assert.deepEqual(normalizeTutors({ __status: 500 }), {}); // a dead-endpoint stub
@@ -593,10 +593,10 @@ test("tutorDisplayName / lessonTutorId resolve the name and id fields in priorit
 
 test("normalizeLesson resolves the tutor through the raw tutors.json shape {result: <object map>}", () => {
   const n = normalizeLesson(
-    { lesson: { id: "L", tutorIds: ["t9"] }, tutors: { result: { t9: { id: "t9", displayName: "Niki V." } } } },
+    { lesson: { id: "L", tutorIds: ["t9"] }, tutors: { result: { t9: { id: "t9", displayName: "Alex R." } } } },
     { uid: "S" },
   );
-  assert.equal(n.tutor, "Niki V.");
+  assert.equal(n.tutor, "Alex R.");
 });
 
 test("normalizeLesson falls back to lesson.tutorName (else null) when the tutor is not in the map", () => {

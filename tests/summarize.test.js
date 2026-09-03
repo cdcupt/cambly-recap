@@ -323,10 +323,10 @@ test("buildWeekBundle opens with the week header (label · class count · tutors
   assert.match(bundle, /"Pro Lesson" classes the student READS AN ARTICLE ALOUD/);
   // An explicit label wins; two tutors are listed once each; a nameless week says "unknown".
   const two = buildWeekBundle(
-    [bundleLesson(), bundleLesson({ lessonId: "L2", startAtCST: "2026-05-15T10:30:00+08:00", tutor: "Niki V." }), bundleLesson({ lessonId: "L3", startAtCST: "2026-05-16T10:30:00+08:00" })],
+    [bundleLesson(), bundleLesson({ lessonId: "L2", startAtCST: "2026-05-15T10:30:00+08:00", tutor: "Alex R." }), bundleLesson({ lessonId: "L3", startAtCST: "2026-05-16T10:30:00+08:00" })],
     { weekLabel: "Custom label" },
   );
-  assert.ok(two.startsWith("## Week of Custom label — 3 classes · tutors: Sam, Niki V.\n"));
+  assert.ok(two.startsWith("## Week of Custom label — 3 classes · tutors: Sam, Alex R.\n"));
   const nameless = buildWeekBundle([bundleLesson({ tutor: "" })]);
   assert.match(nameless, /tutors: unknown/);
 });

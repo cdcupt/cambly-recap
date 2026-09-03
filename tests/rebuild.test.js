@@ -501,7 +501,7 @@ test("refactor: run.js re-exports patchTutorNames from src/tutors.js; readTutors
   assert.deepEqual(tutors.readTutorsMap(dataDir, fs), {}, "absent file → {}");
   const first = tutors.persistTutorsMap(dataDir, SEED_TUTORS, fs);
   assert.deepEqual(first, SEED_TUTORS);
-  const second = tutors.persistTutorsMap(dataDir, { result: [{ id: "tutor001", displayName: "Niki V." }] }, fs);
+  const second = tutors.persistTutorsMap(dataDir, { result: [{ id: "tutor001", displayName: "Alex R." }] }, fs);
   assert.deepEqual(Object.keys(second).sort(), ["tutor001", "tutor999"], "merge never drops a previously persisted tutor");
   assert.deepEqual(tutors.readTutorsMap(dataDir, fs), second, "what was written reads back");
 });

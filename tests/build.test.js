@@ -1161,7 +1161,7 @@ function validPlan(over = {}) {
   return {
     focus: "Articles every time.",
     items: [{ day: "Mon", task: "Say it aloud.", why: "sticks" }, { day: "Daily", task: "Six sentences.", why: "" }],
-    askTutor: ["Ask Niki to stop you on every missing article."],
+    askTutor: ["Ask Alex to stop you on every missing article."],
     ...over,
   };
 }

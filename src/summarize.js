@@ -317,7 +317,7 @@ export const RULES = [
   "11. Plan: a concrete 7-day plan for the week AFTER this one. focus = one sentence; 5–7 items",
   "   (day Mon..Sun or \"Daily\"; task at most 25 words, doable in 10–20 minutes, grounded in",
   "   THIS week's errors, vocabulary and tutor suggestions; why at most 15 words); 2–3 askTutor",
-  "   requests for the next class (e.g. \"Ask Niki to stop you on every missing article\").",
+  "   requests for the next class (e.g. \"Ask Alex to stop you on every missing article\").",
   "12. Titles: classes[].title = a specific 3–7 word title of what the class was about (e.g.",
   "   \"Lunch breaks & indoor workdays\"), never \"Pro Lesson\" or another generic label.",
   "13. Tutor notes: classes[].tutorNote = the tutor's OWN closing remark, copied verbatim from",

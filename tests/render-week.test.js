@@ -287,16 +287,16 @@ test("v2: numbering stays sequential when only SOME optional blocks are present 
 
 test("v2: the header names the tutor; each class card reads an eyebrow (min · with <tutor>) and the title-or-topic as its headline", () => {
   const html = renderWeek(goldenWeekV2());
-  assert.match(html, /<p class="sub">2 classes with Niki V\. · published/);
+  assert.match(html, /<p class="sub">2 classes with Alex R\. · published/);
   // Generic "Pro Lesson" topic → the LLM title is the headline (escaped), never the generic topic.
   assert.ok(
-    html.includes('<span>30 min · with Niki V.</span></div><h3 class="ctitle">Lunch breaks &amp; indoor workdays &lt;script&gt;t()&lt;/script&gt;</h3>'),
+    html.includes('<span>30 min · with Alex R.</span></div><h3 class="ctitle">Lunch breaks &amp; indoor workdays &lt;script&gt;t()&lt;/script&gt;</h3>'),
     "eyebrow + title headline on card 1",
   );
   assert.ok(!html.includes("Pro Lesson"), "the generic topic is not displayed when a title exists");
   // title:null → the topic is the headline (softened by displayTopic), the tutor stays in the eyebrow.
   assert.ok(
-    html.includes('<span>60 min · with Niki V.</span></div><h3 class="ctitle">Screen habits &lt;script&gt;alert(1)&lt;/script&gt;</h3>'),
+    html.includes('<span>60 min · with Alex R.</span></div><h3 class="ctitle">Screen habits &lt;script&gt;alert(1)&lt;/script&gt;</h3>'),
     "eyebrow + topic headline on card 2",
   );
   // The legacy fixture (specific topic, tutor "Alex R.") reads the same way.
@@ -318,7 +318,7 @@ test("regression (visual): the class title is the card headline — ink display 
   // The title lives in its own h3, outside the uppercase `.day span` caption …
   const html = renderWeek(goldenWeekV2());
   const card = /<article class="ccard">([\s\S]*?)<\/article>/.exec(html)[1];
-  assert.match(card, /^<div class="day"><b>[^<]+<\/b><span>30 min · with Niki V\.<\/span><\/div><h3 class="ctitle">/);
+  assert.match(card, /^<div class="day"><b>[^<]+<\/b><span>30 min · with Alex R\.<\/span><\/div><h3 class="ctitle">/);
   assert.ok(!/<span>[^<]*Lunch breaks/.test(card), "the title is not inside the day caption");
   // … whose rule never uppercases (displayTopic's sentence-case softening must reach the page) and reads as a headline.
   const rule = /\.mk \.ccard \.ctitle\{([^}]*)\}/.exec(STYLES)[1];
@@ -444,18 +444,18 @@ test("v2: the per-row TRANSCRIPT tag is omitted when EVERY grammar row is derive
   assert.ok(html.includes('<span class="fix">I go to the office every day</span><span class="why">'), "the row itself is unchanged apart from the tag");
 });
 
-test("header tutor line: all named → 'with A, B'; some unnamed → 'with Niki V. and 1 other tutor' (pluralised); none named → no 'with'", () => {
+test("header tutor line: all named → 'with A, B'; some unnamed → 'with Alex R. and 1 other tutor' (pluralised); none named → no 'with'", () => {
   const named = goldenWeekV2();
-  assert.match(renderWeek(named), /<p class="sub">2 classes with Niki V\. · published/, "one tutor named once");
-  named.classes[1].tutor = "Alex R.";
-  assert.match(renderWeek(named), /<p class="sub">2 classes with Niki V\., Alex R\. · published/, "two named tutors listed");
+  assert.match(renderWeek(named), /<p class="sub">2 classes with Alex R\. · published/, "one tutor named once");
+  named.classes[1].tutor = "Sam T.";
+  assert.match(renderWeek(named), /<p class="sub">2 classes with Alex R\., Sam T\. · published/, "two named tutors listed");
   const some = goldenWeekV2();
   some.classes[1].tutor = "";
-  assert.match(renderWeek(some), /<p class="sub">2 classes with Niki V\. and 1 other tutor · published/, "an unnamed class is counted, not dropped");
+  assert.match(renderWeek(some), /<p class="sub">2 classes with Alex R\. and 1 other tutor · published/, "an unnamed class is counted, not dropped");
   const more = goldenWeekV2();
   more.classes = [...more.classes, { ...more.classes[1], lessonId: "L3", tutor: "" }];
   more.classes[1].tutor = "   "; // whitespace-only counts as unnamed
-  assert.match(renderWeek(more), /<p class="sub">3 classes with Niki V\. and 2 other tutors · published/, "plural 'tutors'");
+  assert.match(renderWeek(more), /<p class="sub">3 classes with Alex R\. and 2 other tutors · published/, "plural 'tutors'");
   const none = goldenWeekV2();
   for (const c of none.classes) c.tutor = "";
   const sub = /<p class="sub">[\s\S]*?<\/p>/.exec(renderWeek(none))[0];

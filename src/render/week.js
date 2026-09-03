@@ -42,7 +42,7 @@ const hasText = (v) => typeof v === "string" && v.trim() !== "";
 /**
  * The header's "with …" tutor phrase. Named tutors are listed once each; classes whose
  * tutor is unknown (empty string) are counted honestly as "N other tutor(s)" rather than
- * silently dropped — "5 classes with Niki V. and 1 other tutor". No "with" at all when
+ * silently dropped — "5 classes with Alex R. and 1 other tutor". No "with" at all when
  * no class names a tutor.
  */
 function withTutors(classes) {

@@ -12,7 +12,7 @@ import { goldenWeek, goldenWeekV2 } from "./render-fixtures.js";
 
 const resolve = {
   startAt: (id) => ({ L1: "2026-05-28T20:00:00+08:00", L2: "2026-05-30T20:00:00+08:00" })[id] ?? null,
-  tutor: () => "Niki V.",
+  tutor: () => "Alex R.",
 };
 
 // ── sectionsFor / chipNav ──────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ test("planSection returns '' when absent, else the teal frame: title with the ne
   assert.ok(html.includes('<span class="task">Re-read the two struck sentences above and say the fixed versions aloud five times.</span><span class="pwhy">Fixes stick when spoken.</span>'));
   // An empty why renders no pwhy span.
   assert.match(html, /<span class="task">Describe your lunch in six sentences, one article per noun\. &lt;script&gt;pi\(\)&lt;\/script&gt;<\/span><\/div><\/li>/);
-  assert.ok(html.includes('<h3 class="askh">Ask your tutor next class</h3><ul class="ask"><li><i class="daychip askc">ASK</i><span>Ask Niki to stop you on every missing article.</span></li>'));
+  assert.ok(html.includes('<h3 class="askh">Ask your tutor next class</h3><ul class="ask"><li><i class="daychip askc">ASK</i><span>Ask Alex to stop you on every missing article.</span></li>'));
   assert.equal((html.match(/<i class="daychip askc">ASK<\/i>/g) || []).length, 2);
   assert.ok(html.endsWith("</ul></div></section>"));
 });
