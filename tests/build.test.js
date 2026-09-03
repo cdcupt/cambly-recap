@@ -437,18 +437,18 @@ test("a moment quote that IS a substring of moment.text is kept, and the VM rend
 });
 
 test("classes are one card per lesson: an omitted wire class still yields a card, a duplicate wire class does not dupe, minutes sum from lessons", () => {
-  const l1 = mkLesson({ lessonId: "A", startAtCST: "2026-05-13T09:00:00+08:00", minutes: 30 });
+  const l1 = mkLesson({ lessonId: "A", startAtCST: "2026-05-13T09:00:00+08:00", minutes: 30, tutorNotes: ["Great energy today!"] });
   const l2 = mkLesson({ lessonId: "B", startAtCST: "2026-05-15T09:00:00+08:00", minutes: 25 });
   const wire = mkWire({
     classes: [
-      { lessonId: "A", moment: { text: "first take", quotes: [] }, tutorNote: "nice" },
+      { lessonId: "A", moment: { text: "first take", quotes: [] }, tutorNote: "Great energy today!" }, // verbatim tutor note → kept
       { lessonId: "A", moment: { text: "DUPLICATE", quotes: [] }, tutorNote: "dup" }, // duplicate id → ignored
       // B omitted from the wire entirely
     ],
   });
   const { weekVM } = buildWeekVM({ window: WIN, lessons: [l1, l2], wire, now: NOW });
   assert.deepEqual(weekVM.classes.map((c) => c.lessonId), ["A", "B"]); // exactly one card each
-  assert.equal(weekVM.classes[0].tutorNote, "nice"); // first wire entry wins, not the dup
+  assert.equal(weekVM.classes[0].tutorNote, "Great energy today!"); // first wire entry wins, not the dup
   assert.equal(weekVM.classes[0].moment.text, "first take");
   assert.equal(weekVM.classes[1].moment, null); // B had no wire class → no moment highlight
   assert.equal(weekVM.stats.classes, 2);
@@ -1537,7 +1537,8 @@ test("the gloss shape is case-insensitive, tolerates an inflected leading term a
 test("classes[].tutorNote is dropped when Cambly's own tutorNotes reach the Focus box (the note shows once, verbatim); kept when the lesson has no tutor note", () => {
   const feedback = (tutorNotes) => ({ finalAIFeedback: { whatYouDidWell: "Great idioms today." }, tutorNotes, tutorNotesTranslated: null, finalSuggestedNextLesson: null });
   const withNote = mkLesson({ lessonId: "A", startAtCST: "2026-05-13T09:00:00+08:00", aiTutorFeedback: feedback("You made class fly by, see you Thursday!") });
-  const noNote = mkLesson({ lessonId: "B", startAtCST: "2026-05-14T09:00:00+08:00", aiTutorFeedback: feedback(null) });
+  // B: no Cambly tutor note, but the tutor DID type "Keep it up!" in chat → verbatim → kept.
+  const noNote = mkLesson({ lessonId: "B", startAtCST: "2026-05-14T09:00:00+08:00", aiTutorFeedback: feedback(null), chat: [{ text: "Keep it up!", from: "tutor" }] });
   const legacy = mkLesson({ lessonId: "C", startAtCST: "2026-05-15T09:00:00+08:00" }); // no ai_tutor feedback at all
   const wire = mkWire({
     classes: [
@@ -1551,9 +1552,10 @@ test("classes[].tutorNote is dropped when Cambly's own tutorNotes reach the Focu
   const [a, b, c] = weekVM.classes;
   assert.equal(a.tutorNote, null, "the Focus box already shows the tutor's note verbatim");
   assert.equal(a.tutorFocus.tutorNotes, "You made class fly by, see you Thursday!");
-  assert.equal(b.tutorNote, "Keep it up!", "no Cambly tutor note → the wire note stays");
+  assert.equal(b.tutorNote, "Keep it up!", "no Cambly tutor note + a verbatim tutor chat line → the wire note stays");
   assert.equal(b.tutorFocus.tutorNotes, null);
-  assert.equal(c.tutorNote, "Nice work.", "legacy lesson (no ai_tutor feedback) → the wire note stays");
+  assert.equal(c.tutorNote, null, "RULE 13 (Codex, PR #4): a wire note that is not a verbatim tutor line is dropped, never published as tutor feedback");
+  assert.ok(weekVM.build.rejects.some((r) => r.type === "quote-guard" && r.section === "tutorNote" && r.lessonId === "C"), "the drop is logged");
   assert.equal(c.tutorFocus, null);
   assert.doesNotThrow(() => validateWeek(weekVM));
 });

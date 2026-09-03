@@ -416,9 +416,15 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
         guard(q, corpus, "any", { section: "moment", lessonId: l.lessonId }),
       );
       const focus = tutorFocusOf(l);
-      // The tutor's note is shown ONCE: when Cambly's own tutorNotes reach the Focus box
-      // (verbatim), the wire tutorNote — at best a copy, at worst a topic summary — is dropped.
-      const tutorNote = hasStr(focus?.tutorNotes) ? null : c.tutorNote ?? null;
+      // RULE 13: the wire tutorNote renders only as a VERBATIM tutor line (chat · tutor notes ·
+      // tutor turns — tutor-side guard), and never when Cambly's own tutorNotes already reach
+      // the Focus box (the note shows once). Anything else — a paraphrase or a topic summary
+      // the LLM put there — is dropped + logged, never published as tutor feedback.
+      const rawNote = hasStr(c.tutorNote) ? c.tutorNote : null;
+      const tutorNote =
+        rawNote !== null && !hasStr(focus?.tutorNotes) && guard(rawNote, corpus, "tutor", { section: "tutorNote", lessonId: l.lessonId })
+          ? rawNote
+          : null;
       // The class highlight (moment/tutorNote) is authoritative; a coaching line in the
       // Focus box that repeats the same sign-off is stripped so it shows once (finding 2).
       const tutorFocus = dedupeFocusSignoff(focus, [momentText, tutorNote]);
