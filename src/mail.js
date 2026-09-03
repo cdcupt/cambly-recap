@@ -71,16 +71,28 @@ function textToHtml(lines) {
 
 // ── the four outcome templates ───────────────────────────────────────────────────
 
+/** The week's CEFR band when the run passed one (`ctx.level = vm.level`), else null. */
+function levelBand(ctx) {
+  const l = ctx && ctx.level;
+  return l && typeof l.overall === "string" && l.overall.trim() ? l : null;
+}
+
 function publishedEmail(ctx) {
   const s = ctx.stats || {};
+  const level = levelBand(ctx);
   const subject =
     `📗 Cambly recap: Week of ${ctx.weekLabel} — ` +
-    `${plural(s.classes ?? 0, "class", "classes")}, ${plural(s.corrections ?? 0, "correction", "corrections")}`;
+    `${plural(s.classes ?? 0, "class", "classes")}, ${plural(s.corrections ?? 0, "correction", "corrections")}` +
+    (level ? ` · level ${level.overall}` : "");
   const lines = [
     `Your Cambly recap for the week of ${ctx.weekLabel} is ready.`,
     `${s.classes ?? 0} classes · ${s.minutes ?? 0} minutes · ${s.corrections ?? 0} corrections · ${s.expressions ?? 0} expressions`,
-    `Read it: ${ctx.weekUrl}`,
   ];
+  if (level) {
+    const conf = typeof level.confidence === "string" && level.confidence ? ` (${level.confidence} confidence)` : "";
+    lines.push(`Estimated level this week: ${level.overall}${conf}`);
+  }
+  lines.push(`Read it: ${ctx.weekUrl}`);
   if ((ctx.backfilledCount ?? 0) > 0) {
     lines.push(`Also backfilled: ${plural(ctx.backfilledCount, "missed week", "missed weeks")}.`);
   }

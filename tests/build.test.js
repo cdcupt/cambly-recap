@@ -22,10 +22,16 @@ import {
   generateWeekVM,
   humanizePattern,
   stripWorksheet,
+  stripWorksheetStrict,
+  isGenericTopic,
+  nextWeekLabel,
   quoteContainsTerm,
   SummarizeQualityError,
   REPROMPT_THRESHOLD,
+  DERIVED_GRAMMAR_MAX,
+  DERIVED_SAID_MAX_WORDS,
 } from "../src/build.js";
+import { coachNotes, BANDS, LEVEL_DIMENSIONS } from "../src/coach.js";
 
 const FAST = { sleep: async () => {}, backoff: [0, 0, 0] };
 const NOW = Date.parse("2026-05-18T09:00:00+08:00");
@@ -97,8 +103,33 @@ test("U-QG④ collapsed whitespace and newlines still match", () => {
   assert.equal(quoteMatches("I went there today", quoteCorpus(l), "student"), true);
 });
 
-test("U-QG⑤ a case mismatch is rejected (normalization is case-preserving)", () => {
-  assert.equal(quoteMatches("I Really Like Coffee.", quoteCorpus(corpusLesson), "student"), false);
+test("U-QG⑤ a case-only difference is ACCEPTED by the guard (normalizeQuote itself stays case-preserving)", () => {
+  // The LLM capitalises the first word of a mid-sentence span; that is not a real mismatch.
+  assert.equal(quoteMatches("I Really Like Coffee.", quoteCorpus(corpusLesson), "student"), true);
+  assert.equal(quoteMatches("like coffee", quoteCorpus(corpusLesson), "student"), true);
+  const mid = mkLesson({ transcript: [{ text: "so I think if I have two choice, I choose the second", speaker: "student" }] });
+  assert.equal(quoteMatches("If I have two choice", quoteCorpus(mid), "student"), true);
+  // …but a wording difference still is.
+  assert.equal(quoteMatches("I really love coffee.", quoteCorpus(corpusLesson), "student"), false);
+});
+
+test("quoteCorpus is segments-first: a quote spanning two raw fragments matches once the normalizer merged them", () => {
+  const raw = mkLesson({
+    transcript: [{ text: "I went", speaker: "student" }, { text: "to school", speaker: "student" }],
+  });
+  assert.equal(quoteMatches("I went to school", quoteCorpus(raw), "student"), false); // fragments only (U-QG⑧)
+  const merged = mkLesson({
+    transcript: raw.transcript,
+    segments: [{ speaker: "student", text: "I went to school", ts: 0, n: 2 }],
+  });
+  assert.equal(quoteMatches("I went to school", quoteCorpus(merged), "student"), true);
+  // chat + tutor notes still join the corpus alongside the segments
+  const withChat = mkLesson({ segments: [{ speaker: "student", text: "hello", ts: 0, n: 1 }], chat: [{ text: "hiked (past tense)", from: "tutor" }], tutorNotes: ["Great energy today!"] });
+  assert.equal(quoteMatches("hiked (past tense)", quoteCorpus(withChat), "tutor"), true);
+  assert.equal(quoteMatches("Great energy", quoteCorpus(withChat), "tutor"), true);
+  // an empty segments array falls back to the raw transcript
+  const emptySeg = mkLesson({ transcript: [{ text: "fallback line", speaker: "student" }], segments: [] });
+  assert.equal(quoteMatches("fallback line", quoteCorpus(emptySeg), "student"), true);
 });
 
 test("U-QG⑥ a paraphrase is rejected and the reject entry carries type + quote + reason", () => {
@@ -445,11 +476,88 @@ test("class.tutorFocus is lifted VERBATIM from the ai_tutor feedback (not quote-
   const [a, b] = weekVM.classes;
   assert.deepEqual(a.tutorFocus, {
     aiFeedback: "Great idioms today.", // the whatYouDidWell coach-summary section, verbatim
+    workOn: "Watch your tenses.", // the whatWeCanWorkOn section (strict worksheet strip)
     tutorNotes: "You made class fly by!",
     tutorNotesZh: "你让课飞快！",
     nextFocus: "Maintaining Past Tense While Narrating Work Stories",
   });
   assert.equal(b.tutorFocus, null); // no ai_tutor feedback → null (older data shape)
+});
+
+// ── v2: tutorFocus.workOn — the STRICT worksheet rule ─────────────────────────────
+
+test("stripWorksheetStrict nulls a value whose FIRST content line is a worksheet boundary — soft (emoji title) or hard", () => {
+  const worksheet = "💻☕ Tech & Daily Work Small Talk\n🌟 Useful Vocabulary & Phrases\nGlitch – a small technical problem";
+  assert.equal(stripWorksheetStrict(worksheet), null); // emoji title first → whole thing is a worksheet
+  assert.equal(stripWorksheet(worksheet), worksheet); // the lenient rule keeps it (finding 1 — praise field)
+  assert.equal(stripWorksheetStrict("Exercise 1: Choose the Correct Verb\n→ ______"), null); // hard first
+  assert.equal(stripWorksheetStrict("\n  \n🗣️ Exercise 2: What Would You Say?\n\nChoose one"), null); // blank lines before the boundary still count as first
+  // Coaching prose before a worksheet is kept; clean prose is untouched; non-strings pass through.
+  assert.equal(stripWorksheetStrict("Work on articles.\n\n🍽️ Food Verb Tense Exercise\n→ ______"), "Work on articles.");
+  const prose = "One area to keep building is sentence structure and word order.";
+  assert.equal(stripWorksheetStrict(prose), prose);
+  assert.equal(stripWorksheetStrict(null), null);
+  assert.equal(stripWorksheetStrict(undefined), undefined);
+});
+
+test("coachNotes shapes the four Cambly coach fields (lenient didWell, strict workOn/practiceIdeas, verbatim nextLesson)", () => {
+  const notes = coachNotes({
+    finalAIFeedback: {
+      whatYouDidWell: "🎉 Great retention.",
+      whatWeCanWorkOn: "💻☕ Tech & Daily Work Small Talk\nGlitch – a small problem",
+      ideasForPractice: "Retell your day.\n\nExercise 1: Fix the Tense Mistakes\n→ ______",
+    },
+    tutorNotes: "x",
+    tutorNotesTranslated: null,
+    finalSuggestedNextLesson: "Articles in technical talk",
+  });
+  assert.deepEqual(notes, { didWell: "🎉 Great retention.", workOn: null, practiceIdeas: "Retell your day.", nextLesson: "Articles in technical talk" });
+  // Plain-string finalAIFeedback (older shape) is the praise field; a null block yields four nulls.
+  assert.equal(coachNotes({ finalAIFeedback: "Solid class." }).didWell, "Solid class.");
+  assert.deepEqual(coachNotes(null), { didWell: null, workOn: null, practiceIdeas: null, nextLesson: null });
+  assert.deepEqual(coachNotes({ finalAIFeedback: { whatWeCanWorkOn: "   " } }).workOn, null);
+});
+
+test("tutorFocus.workOn is Cambly's whatWeCanWorkOn under the STRICT rule: prose kept, pasted worksheet → null, tail cut", () => {
+  const build = (workOn) => {
+    const l = mkLesson({ aiTutorFeedback: { finalAIFeedback: { whatYouDidWell: "Good.", whatWeCanWorkOn: workOn }, tutorNotes: null, tutorNotesTranslated: null, finalSuggestedNextLesson: null } });
+    return buildWeekVM({ window: WIN, lessons: [l], wire: mkWire(), now: NOW }).weekVM.classes[0].tutorFocus.workOn;
+  };
+  assert.equal(build("Choosing between near-synonyms is worth focused attention."), "Choosing between near-synonyms is worth focused attention.");
+  assert.equal(build("💻☕ Tech & Daily Work Small Talk\n🌟 Useful Vocabulary\nGlitch – a small technical problem"), null);
+  assert.equal(build("Watch your articles.\n\n✏️ Exercise 1: Choose the Correct Verb\nYesterday I (go / went) home."), "Watch your articles.");
+  assert.equal(build(undefined), null);
+  // A lesson with no ai_tutor block has no tutorFocus at all (unchanged).
+  assert.equal(buildWeekVM({ window: WIN, lessons: [mkLesson()], wire: mkWire(), now: NOW }).weekVM.classes[0].tutorFocus, null);
+});
+
+// ── v2: classes[].title — the LLM title only stands in for a generic topic ─────────
+
+test("isGenericTopic recognises Cambly's generic lesson-plan titles (case/space-insensitive) and blanks", () => {
+  for (const t of [null, undefined, "", "  ", "Pro Lesson", "pro lesson", "PRO  LESSON", "Kickoff Conversation", "Conversation"]) {
+    assert.equal(isGenericTopic(t), true, JSON.stringify(t));
+  }
+  for (const t of ["Weekend Plans", "Lunch breaks & indoor workdays", "Getting to know you", "Pro Lesson: Remote work"]) {
+    assert.equal(isGenericTopic(t), false, t);
+  }
+});
+
+test("classes[].title is set ONLY for a generic topic, and never to another generic/blank/over-long title", () => {
+  const cls = (topic, title) => {
+    const l = mkLesson({ topic });
+    const wire = mkWire({ classes: [{ lessonId: "L1", title, moment: { text: "m", quotes: [] }, tutorNote: null }] });
+    return buildWeekVM({ window: WIN, lessons: [l], wire, now: NOW }).weekVM.classes[0];
+  };
+  assert.equal(cls("Pro Lesson", "Lunch breaks & indoor workdays").title, "Lunch breaks & indoor workdays");
+  assert.equal(cls("Pro Lesson", "Lunch breaks & indoor workdays").topic, "Pro Lesson", "the topic is kept verbatim on the VM");
+  assert.equal(cls(null, "  Coffee habits at work  ").title, "Coffee habits at work"); // trimmed
+  assert.equal(cls("Weekend Plans", "Lunch breaks & indoor workdays").title, null); // a specific topic wins
+  assert.equal(cls("Pro Lesson", "Pro Lesson").title, null); // RULE 12 violated → dropped
+  assert.equal(cls("Pro Lesson", "").title, null);
+  assert.equal(cls("Pro Lesson", "one two three four five six seven eight nine ten eleven twelve thirteen").title, null); // over-long
+  // A wire without a class entry (or a legacy wire without `title`) yields null.
+  const noWire = buildWeekVM({ window: WIN, lessons: [mkLesson({ topic: "Pro Lesson" })], wire: mkWire(), now: NOW }).weekVM.classes[0];
+  assert.equal(noWire.title, null);
 });
 
 test("tutorFocus passes a plain-string finalAIFeedback straight through as aiFeedback", () => {
@@ -855,6 +963,350 @@ test("a definition of the term is dropped, but a clean short unique usage is kep
   assert.doesNotThrow(() => validateWeek(weekVM));
 });
 
+// ── v2: transcript-derived grammar items (RULE 6) — guard + ids + split Σ ─────────
+
+const derivedLesson = () =>
+  mkLesson({
+    transcript: [
+      { text: "so I think if I have two choice, I choose the second one", speaker: "student" },
+      { text: "I go to office every day and I eat at desk", speaker: "student" },
+      { text: "You should say two choices.", speaker: "tutor" },
+    ],
+  });
+
+const derivedItem = (over = {}) => ({
+  correctionId: null,
+  said: "If I have two choice",
+  fix: "If I have two choices",
+  why: "'two' needs a plural noun",
+  lessonId: "L1",
+  ...over,
+});
+
+test("a derived grammar item whose said is a verbatim STUDENT span (case-insensitive) is kept as g-d1, derived:true, outside Σ", () => {
+  const wire = mkWire({ grammarGroups: [{ pattern: "Plural -s", rule: "Two or more → plural noun.", items: [derivedItem()] }] });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [derivedLesson()], wire, now: NOW });
+  assert.equal(weekVM.grammarGroups.length, 1);
+  const it = weekVM.grammarGroups[0].items[0];
+  assert.deepEqual(it, {
+    id: "g-d1",
+    said: "If I have two choice", // the LLM's own span, kept verbatim (capitalised first word tolerated)
+    fix: "If I have two choices",
+    why: "'two' needs a plural noun",
+    lessonId: "L1",
+    correctionId: null,
+    derived: true,
+  });
+  // Σ: no Cambly records → reported 0 = anchored 0; the section (and the header stat) list 1 row.
+  assert.equal(weekVM.integrity.reportedCorrections, 0);
+  assert.equal(weekVM.integrity.renderedGrammar, 1);
+  assert.equal(weekVM.integrity.derivedGrammar, 1);
+  assert.equal(weekVM.stats.corrections, 1);
+  assert.doesNotThrow(() => validateWeek(weekVM));
+  assert.doesNotThrow(() => assertSigma(weekVM));
+  assert.equal(weekVM.build.rejects.length, 0);
+});
+
+test("derived items mix with anchored ones: Σ counts only anchored, stats.corrections counts every row, ids stay distinct", () => {
+  const lesson = derivedLesson();
+  lesson.corrections = [{ id: "c1", said: "I eat at desk", fix: "I eat at my desk", why: "possessive" }];
+  const wire = mkWire({
+    grammarGroups: [
+      { pattern: "Plural -s", rule: null, items: [derivedItem()] },
+      { pattern: "Articles", rule: null, items: [{ correctionId: "c1", said: null, fix: null, why: "needs 'my'", lessonId: null }, derivedItem({ said: "I go to office", fix: "I go to the office", why: "article" })] },
+    ],
+  });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW });
+  const items = weekVM.grammarGroups.flatMap((g) => g.items);
+  assert.deepEqual(items.map((i) => i.id), ["g-d1", "g-c1", "g-d2"]);
+  assert.deepEqual(items.map((i) => i.derived), [true, false, true]);
+  assert.equal(items[1].said, "I eat at desk", "anchored said/fix come from the Cambly record, not the wire");
+  assert.equal(weekVM.integrity.reportedCorrections, 1);
+  assert.equal(weekVM.integrity.renderedGrammar, 3);
+  assert.equal(weekVM.integrity.derivedGrammar, 2);
+  assert.equal(weekVM.stats.corrections, 3);
+  assert.doesNotThrow(() => assertSigma(weekVM));
+  // A self-healed record also carries derived:false.
+  const healed = buildWeekVM({ window: WIN, lessons: [lesson], wire: mkWire(), now: NOW }).weekVM;
+  assert.equal(healed.grammarGroups[0].items[0].derived, false);
+});
+
+test("a derived item is dropped + logged when said is not a student line, is a tutor line, exceeds 25 words, equals its fix, or cites an unknown lesson", () => {
+  const cases = [
+    { it: derivedItem({ said: "if I have three choice" }), type: "quote-guard" }, // wording differs
+    { it: derivedItem({ said: "You should say two choices.", fix: "You should say two choice." }), type: "quote-guard" }, // tutor line, student side
+    { it: derivedItem({ said: Array.from({ length: DERIVED_SAID_MAX_WORDS + 1 }, (_, i) => `w${i}`).join(" ") }), type: "derived-grammar" },
+    { it: derivedItem({ fix: "if I have two choice" }), type: "derived-grammar" }, // identical (case-insensitive)
+    { it: derivedItem({ lessonId: "nope" }), type: "derived-grammar" },
+    { it: derivedItem({ said: "" }), type: "derived-grammar" },
+    { it: derivedItem({ fix: null }), type: "derived-grammar" },
+  ];
+  for (const { it, type } of cases) {
+    const wire = mkWire({ grammarGroups: [{ pattern: "P", rule: null, items: [it] }] });
+    const { weekVM } = buildWeekVM({ window: WIN, lessons: [derivedLesson()], wire, now: NOW });
+    assert.equal(weekVM.grammarGroups.length, 0, `dropped: ${JSON.stringify(it)}`);
+    assert.ok(weekVM.build.rejects.some((r) => r.type === type && r.dropped && r.section === "grammar"), `logged as ${type}: ${JSON.stringify(it)}`);
+    assert.equal(weekVM.stats.corrections, 0);
+  }
+});
+
+test("derived items are de-duplicated on said and capped at DERIVED_GRAMMAR_MAX; the guard ratio counts derived misses", () => {
+  const lines = Array.from({ length: DERIVED_GRAMMAR_MAX + 2 }, (_, i) => ({ text: `I have ${i} apple in my bag`, speaker: "student" }));
+  const lesson = mkLesson({ transcript: lines });
+  const items = lines.map((l, i) => derivedItem({ said: l.text, fix: `I have ${i} apples in my bag` }));
+  const wire = mkWire({ grammarGroups: [{ pattern: "Plural -s", rule: null, items: [...items, derivedItem({ said: "i have 0 apple in my bag", fix: "x" })] }] });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW });
+  assert.equal(weekVM.grammarGroups[0].items.length, DERIVED_GRAMMAR_MAX);
+  assert.equal(weekVM.grammarGroups[0].items.at(-1).id, `g-d${DERIVED_GRAMMAR_MAX}`);
+  assert.ok(weekVM.build.rejects.some((r) => r.type === "derived-grammar" && /more than/.test(r.reason)));
+  assert.ok(weekVM.build.rejects.some((r) => r.type === "derived-grammar" && /duplicate/.test(r.reason)));
+  // A wire that is mostly bad derived quotes trips the re-prompt ratio like any other quote field.
+  const bad = mkWire({ grammarGroups: [{ pattern: "P", rule: null, items: [derivedItem({ said: "never said one" }), derivedItem({ said: "never said two" })] }] });
+  assert.ok(buildWeekVM({ window: WIN, lessons: [derivedLesson()], wire: bad, now: NOW }).rejectRatio > REPROMPT_THRESHOLD);
+});
+
+test("a legacy grammar item (correctionId only, no said/fix/lessonId keys) still resolves as anchored", () => {
+  const lesson = mkLesson({ corrections: [{ id: "c1", said: "I go", fix: "I went", why: "past" }] });
+  const wire = mkWire({ grammarGroups: [{ pattern: "Past tense", rule: null, items: [{ correctionId: "c1", why: "over" }] }] });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW });
+  assert.equal(weekVM.grammarGroups[0].items[0].id, "g-c1");
+  assert.equal(weekVM.grammarGroups[0].items[0].derived, false);
+  assert.equal(weekVM.integrity.derivedGrammar, 0);
+});
+
+// ── v2: vocabulary.example — shown only when no clean verbatim usage survived ─────
+
+test("a vocab example is kept only when the quote was NOT a clean usage and the example is a short real usage of the term", () => {
+  const notUsage = "could you explain what that word means?";
+  const usage = "I am not very tech savvy at all";
+  const lesson = mkLesson({ transcript: [{ text: notUsage, speaker: "student" }, { text: usage, speaker: "student" }] });
+  const vocab = (quote, example) => ({ term: "tech savvy", meaning: "good with technology", quote, quoteBy: "student", lessonId: "L1", fromCorrectionId: null, example });
+  const build = (v) => buildWeekVM({ window: WIN, lessons: [lesson], wire: mkWire({ vocabulary: [v] }), now: NOW }).weekVM.vocabulary[0];
+
+  const kept = build(vocab(notUsage, "My brother is very tech savvy."));
+  assert.equal(kept.quote, null);
+  assert.equal(kept.example, "My brother is very tech savvy.");
+
+  const cleanQuote = build(vocab(usage, "My brother is very tech savvy."));
+  assert.equal(cleanQuote.quote, usage);
+  assert.equal(cleanQuote.example, null, "a clean verbatim quote wins; the model sentence is dropped");
+
+  assert.equal(build(vocab(notUsage, "My brother is very good with computers.")).example, null, "example must contain the term");
+  assert.equal(build(vocab(notUsage, "My brother, who lives in a small town near the coast, is very tech savvy indeed.")).example, null, "≤ 14 words");
+  assert.equal(build(vocab(notUsage, "Tech savvy means good with technology.")).example, null, "a definition is not a usage");
+  assert.equal(build(vocab(notUsage, null)).example, null);
+  assert.equal(build(vocab(notUsage, "   ")).example, null);
+  // A legacy wire item without an `example` key → null.
+  const legacy = { term: "tech savvy", meaning: "m", quote: notUsage, quoteBy: "student", lessonId: "L1", fromCorrectionId: null };
+  assert.equal(buildWeekVM({ window: WIN, lessons: [lesson], wire: mkWire({ vocabulary: [legacy] }), now: NOW }).weekVM.vocabulary[0].example, null);
+});
+
+test("a vocab example equal to a flagged error form (a Cambly correction or a derived said) is dropped", () => {
+  const errSaid = "I'm a tech savvy, but I want to improve.";
+  const lesson = mkLesson({
+    transcript: [{ text: "what does that word mean", speaker: "student" }, { text: errSaid, speaker: "student" }],
+    corrections: [{ id: "c1", said: errSaid, fix: "I'm tech savvy, but I want to improve.", why: "no article" }],
+  });
+  const wire = mkWire({
+    vocabulary: [{ term: "tech savvy", meaning: "m", quote: "what does that word mean", quoteBy: "student", lessonId: "L1", fromCorrectionId: null, example: errSaid }],
+    grammarGroups: [{ pattern: "Articles", rule: null, items: [{ correctionId: "c1", said: null, fix: null, why: "x", lessonId: null }] }],
+  });
+  assert.equal(buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW }).weekVM.vocabulary[0].example, null);
+});
+
+// ── v2: review / level / plan composition + guards ──────────────────────────────
+
+const reviewLesson = () =>
+  mkLesson({
+    transcript: [
+      { text: "I go to office every day", speaker: "student" },
+      { text: "Try: I go to the office", speaker: "tutor" },
+    ],
+  });
+
+function validLevel(over = {}) {
+  return {
+    overall: "B1+",
+    confidence: "medium",
+    dimensions: LEVEL_DIMENSIONS.map((name) => ({ name, band: "B1+", evidence: `${name} evidence` })),
+    summary: "Long turns, systematic slips.",
+    advice: [{ title: "A", detail: "a" }, { title: "B", detail: "b" }, { title: "C", detail: "c" }],
+    ...over,
+  };
+}
+
+function validPlan(over = {}) {
+  return {
+    focus: "Articles every time.",
+    items: [{ day: "Mon", task: "Say it aloud.", why: "sticks" }, { day: "Daily", task: "Six sentences.", why: "" }],
+    askTutor: ["Ask Niki to stop you on every missing article."],
+    ...over,
+  };
+}
+
+test("a legacy wire (no review/level/plan) composes a VM WITHOUT those keys; the empty stub is unchanged", () => {
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire(), now: NOW });
+  assert.ok(!("review" in weekVM) && !("level" in weekVM) && !("plan" in weekVM));
+  assert.equal(weekVM.integrity.derivedGrammar, 0);
+  const stub = buildEmptyWeekVM({ window: WIN, model: "m", now: NOW });
+  assert.ok(!("review" in stub) && !("level" in stub) && !("plan" in stub) && !("derivedGrammar" in stub.integrity));
+});
+
+test("review composes with guarded quotes: any side for wentWell, student side for needsWork; a miss NULLS the quote and keeps the item", () => {
+  const wire = mkWire({
+    review: {
+      summary: "A steady week.",
+      wentWell: [
+        { point: "You took the tutor's fix on board", quote: "Try: I go to the office", lessonId: "L1" }, // tutor line, any side → kept
+        { point: "Long turns", quote: "never said this", lessonId: "L1" }, // miss → nulled, kept
+        { point: "", quote: null, lessonId: null }, // blank → dropped
+        { point: "Unknown lesson", quote: "I go to office every day", lessonId: "L9" }, // unknown lesson → quote + lessonId null
+      ],
+      needsWork: [
+        { issue: "Articles", fix: "Say 'the office'.", quote: "i go to office every day", lessonId: "L1" }, // case differs → kept
+        { issue: "Tutor line", fix: "x", quote: "Try: I go to the office", lessonId: "L1" }, // tutor line on the student side → nulled
+        { issue: "No fix", fix: "", quote: null, lessonId: null }, // dropped
+      ],
+    },
+  });
+  const built = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire, now: NOW });
+  const r = built.weekVM.review;
+  assert.equal(r.summary, "A steady week.");
+  assert.deepEqual(r.wentWell, [
+    { point: "You took the tutor's fix on board", quote: "Try: I go to the office", lessonId: "L1" },
+    { point: "Long turns", quote: null, lessonId: "L1" },
+    { point: "Unknown lesson", quote: null, lessonId: null },
+  ]);
+  assert.deepEqual(r.needsWork, [
+    { issue: "Articles", fix: "Say 'the office'.", quote: "i go to office every day", lessonId: "L1" },
+    { issue: "Tutor line", fix: "x", quote: null, lessonId: "L1" },
+  ]);
+  // Misses are logged as quote-guard entries that did NOT drop the item, and they count toward the re-prompt ratio.
+  const misses = built.weekVM.build.rejects.filter((x) => x.type === "quote-guard" && x.section === "review");
+  assert.equal(misses.length, 3);
+  assert.ok(misses.every((x) => x.dropped === false));
+  assert.equal(built.weekVM.integrity.rejectedCount, 0, "nulled quotes are not dropped items");
+  assert.ok(built.rejectRatio > 0);
+  assert.doesNotThrow(() => validateWeek(built.weekVM));
+});
+
+test("review lists are capped (4 / 6) and a review with an empty summary is omitted + logged", () => {
+  const many = mkWire({
+    review: {
+      summary: "s",
+      wentWell: Array.from({ length: 6 }, (_, i) => ({ point: `p${i}`, quote: null, lessonId: null })),
+      needsWork: Array.from({ length: 8 }, (_, i) => ({ issue: `i${i}`, fix: `f${i}`, quote: null, lessonId: null })),
+    },
+  });
+  const r = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: many, now: NOW }).weekVM.review;
+  assert.equal(r.wentWell.length, 4);
+  assert.equal(r.needsWork.length, 6);
+  const none = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire({ review: { summary: "  ", wentWell: [], needsWork: [] } }), now: NOW }).weekVM;
+  assert.ok(!("review" in none));
+  assert.ok(none.build.rejects.some((x) => x.type === "review" && /summary/.test(x.reason)));
+});
+
+test("level composes bandIndex, canonical dimension order, inherited missing dimensions, confidence fallback and a ≤3 advice cap (never padded)", () => {
+  const wire = mkWire({
+    level: validLevel({
+      confidence: "very", // unknown → low
+      dimensions: [
+        { name: "fluency", band: "B2", evidence: "77 wpm" },
+        { name: "spelling", band: "C1", evidence: "ignored" }, // not a canonical dimension
+        { name: "Range", band: "B1", evidence: "case-insensitive name" },
+        { name: "accuracy", band: "Z9", evidence: "bad band → treated as missing" },
+        { name: "interaction", band: "B1+", evidence: "" },
+        // coherence missing → inherits the overall band
+      ],
+      advice: [{ title: "A", detail: "a" }, { title: "", detail: "blank title dropped" }, { title: "B", detail: "b" }, { title: "C", detail: "c" }, { title: "D", detail: "d" }],
+    }),
+  });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire, now: NOW });
+  const l = weekVM.level;
+  assert.equal(l.overall, "B1+");
+  assert.equal(l.bandIndex, BANDS.indexOf("B1+"));
+  assert.equal(l.confidence, "low");
+  assert.deepEqual(l.dimensions.map((d) => d.name), [...LEVEL_DIMENSIONS]);
+  assert.deepEqual(l.dimensions.map((d) => d.band), ["B1", "B1+", "B2", "B1+", "B1+"]);
+  assert.deepEqual(l.dimensions.map((d) => d.bandIndex), [2, 3, 4, 3, 3]);
+  assert.equal(l.dimensions[1].evidence, "", "an invalid-band dimension inherits overall with empty evidence");
+  assert.equal(l.dimensions[4].evidence, "", "a missing dimension inherits overall with empty evidence");
+  assert.equal(l.dimensions[0].evidence, "case-insensitive name");
+  assert.deepEqual(l.advice.map((a) => a.title), ["A", "B", "C"]);
+  assert.equal(l.summary, "Long turns, systematic slips.");
+  assert.ok(weekVM.build.rejects.some((x) => x.type === "level" && /coherence/.test(x.reason)));
+  assert.doesNotThrow(() => validateWeek(weekVM));
+  // Fewer than three valid advice items are kept as-is — no invented padding.
+  const one = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire({ level: validLevel({ advice: [{ title: "Only", detail: "one" }] }) }), now: NOW }).weekVM.level;
+  assert.equal(one.advice.length, 1);
+});
+
+test("level is omitted + logged on an unknown overall band or an empty summary", () => {
+  const bad = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire({ level: validLevel({ overall: "Z9" }) }), now: NOW }).weekVM;
+  assert.ok(!("level" in bad));
+  assert.ok(bad.build.rejects.some((x) => x.type === "level" && x.dropped && /unknown band/.test(x.reason)));
+  const blank = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire({ level: validLevel({ summary: " " }) }), now: NOW }).weekVM;
+  assert.ok(!("level" in blank));
+});
+
+test("nextWeekLabel is the label of the week AFTER the window, from the weekId alone", () => {
+  assert.equal(nextWeekLabel(WIN), "May 18–24"); // WIN = week of 2026-05-11
+  assert.equal(nextWeekLabel({ weekId: "2026-05-25" }), "Jun 1–7"); // month-crossing next week
+  assert.equal(nextWeekLabel({ weekId: "2026-06-22" }), "Jun 29 – Jul 5");
+});
+
+test("plan composes with the builder-derived next-week label; unknown days / blank tasks are dropped, lists capped, non-string why → ''", () => {
+  const wire = mkWire({
+    plan: validPlan({
+      items: [
+        ...Array.from({ length: 8 }, (_, i) => ({ day: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Daily"][i], task: `task ${i}`, why: i === 0 ? null : `why ${i}` })),
+        { day: "Funday", task: "dropped", why: "" },
+        { day: "Mon", task: "  ", why: "dropped" },
+      ],
+      askTutor: ["a", "b", "c", "d", ""],
+    }),
+  });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire, now: NOW });
+  const p = weekVM.plan;
+  assert.equal(p.weekLabel, "May 18–24");
+  assert.equal(p.focus, "Articles every time.");
+  assert.equal(p.items.length, 7);
+  assert.deepEqual(p.items[0], { day: "Mon", task: "task 0", why: "" });
+  assert.deepEqual(p.items.map((i) => i.day), ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+  assert.deepEqual(p.askTutor, ["a", "b", "c"]);
+  assert.ok(weekVM.build.rejects.some((x) => x.type === "plan" && !x.dropped && /2 plan item/.test(x.reason)));
+  assert.doesNotThrow(() => validateWeek(weekVM));
+});
+
+test("plan is omitted + logged on an empty focus or when no valid item survives", () => {
+  const noFocus = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire({ plan: validPlan({ focus: "" }) }), now: NOW }).weekVM;
+  assert.ok(!("plan" in noFocus));
+  assert.ok(noFocus.build.rejects.some((x) => x.type === "plan" && x.dropped && /focus/.test(x.reason)));
+  const noItems = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire: mkWire({ plan: validPlan({ items: [{ day: "Someday", task: "x", why: "" }] }) }), now: NOW }).weekVM;
+  assert.ok(!("plan" in noItems));
+});
+
+test("a full v2 wire composes every block, keeps the legacy key set + review/level/plan, and passes both render gates", () => {
+  const lesson = derivedLesson();
+  const wire = mkWire({
+    classes: [{ lessonId: "L1", title: "Work routines & lunch", moment: { text: "m", quotes: [] }, tutorNote: null }],
+    grammarGroups: [{ pattern: "Plural -s", rule: null, items: [derivedItem()] }],
+    review: { summary: "s", wentWell: [{ point: "p", quote: null, lessonId: null }], needsWork: [{ issue: "i", fix: "f", quote: null, lessonId: null }] },
+    level: validLevel(),
+    plan: validPlan(),
+  });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW });
+  assert.deepEqual(Object.keys(weekVM).sort(), [
+    "build", "classes", "endDate", "grammarGroups", "integrity", "isEmpty", "level", "phrasing", "plan", "practice",
+    "publishedAt", "review", "schemaVersion", "startDate", "stats", "vocabulary", "weekId", "weekLabel",
+  ]);
+  assert.doesNotThrow(() => validateWeek(weekVM));
+  assert.doesNotThrow(() => assertSigma(weekVM));
+  // Deterministic: byte-identical on identical inputs.
+  const again = buildWeekVM({ window: WIN, lessons: [lesson], wire, now: NOW }).weekVM;
+  assert.equal(JSON.stringify(again), JSON.stringify(weekVM));
+});
+
 // ── generateWeekVM — orchestration + corrective re-prompt (I-SM ④) ─────────────
 
 /** Start a mock OpenAI server for generateWeekVM (per-call scripted responses). */
@@ -885,7 +1337,7 @@ test("generateWeekVM short-circuits an empty week with the stub and zero LLM cal
   assert.equal(out.weekVM.isEmpty, true);
 });
 
-test("generateWeekVM makes exactly one call on a clean week", async () => {
+test("generateWeekVM makes exactly one call on a clean week and sends the week header in the bundle", async () => {
   const lesson = mkLesson({ transcript: [{ text: "I like coffee", speaker: "student" }], corrections: [] });
   const cleanWire = { classes: [], vocabulary: [{ term: "coffee", meaning: "drink", quote: "I like coffee", quoteBy: "student", lessonId: "L1", fromCorrectionId: null }], grammarGroups: [], phrasing: [], practice: [] };
   const mock = await startMock(() => ({ status: 200, body: envelope(cleanWire) }));
@@ -894,6 +1346,8 @@ test("generateWeekVM makes exactly one call on a clean week", async () => {
     assert.equal(out.llmCalls, 1);
     assert.equal(out.reprompted, false);
     assert.equal(out.weekVM.vocabulary.length, 1);
+    const bundle = JSON.parse(mock.requests[0].body).messages[1].content;
+    assert.ok(bundle.startsWith(`## Week of ${WIN.weekLabel} — 1 class · tutors: Sam Rivers`), bundle.split("\n")[0]);
   } finally {
     await mock.close();
   }

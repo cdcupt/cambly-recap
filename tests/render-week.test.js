@@ -7,10 +7,20 @@ import assert from "node:assert/strict";
 import { renderWeek } from "../src/render/week.js";
 import {
   goldenWeek,
+  goldenWeekV2,
   recentWeek,
   staleSiteState,
   healthySiteState,
 } from "./render-fixtures.js";
+
+const LEGACY_IDS = ["m-classes", "m-vocab", "m-grammar", "m-phrasing", "m-practice"];
+const V2_IDS = ["m-review", "m-level", ...LEGACY_IDS, "m-plan"];
+const sectionIds = (html) => [...html.matchAll(/<section id="(m-[a-z]+)"/g)].map((m) => m[1]);
+const sectionNums = (html) => [...html.matchAll(/<span class="num">(\d\d)<\/span>/g)].map((m) => m[1]);
+const chipHrefs = (html) => {
+  const nav = /<nav class="chips"[^>]*>(.*?)<\/nav>/.exec(html)[1];
+  return [...nav.matchAll(/href="#(m-[a-z]+)"/g)].map((m) => m[1]);
+};
 
 test("renderWeek golden: single h1, all five section anchors + chips, stat band", () => {
   const html = renderWeek(goldenWeek());
@@ -237,4 +247,121 @@ test("renderWeek recent shape: tutorFocus content is escaped (nextFocus XSS prob
   const html = renderWeek(recentWeek());
   assert.ok(html.includes("Using future forms for plans &lt;script&gt;x&lt;/script&gt;"), "nextFocus script escaped");
   assert.ok(!html.includes("<script>x</script>"), "no live injected script from tutorFocus");
+});
+
+// ── recap v2: dynamic sections, tutors, titles, work-on, derived rows, examples ─────
+
+test("v2: an older VM (no review/level/plan) renders EXACTLY the five legacy sections, numbered 01..05, five chips in order", () => {
+  const html = renderWeek(goldenWeek());
+  assert.deepEqual(sectionIds(html), LEGACY_IDS);
+  assert.deepEqual(sectionNums(html), ["01", "02", "03", "04", "05"]);
+  assert.deepEqual(chipHrefs(html), LEGACY_IDS);
+  for (const id of ["m-review", "m-level", "m-plan"]) assert.ok(!html.includes(`id="${id}"`), `${id} absent`);
+  assert.ok(!html.includes("Level estimate") && !html.includes("The week in review") && !html.includes("Plan for the week"));
+});
+
+test("v2: a VM carrying every block renders all eight sections in order Review · Level · Classes · Vocabulary · Grammar · Phrasing · Practice · Plan, numbered 01..08", () => {
+  const html = renderWeek(goldenWeekV2());
+  assert.deepEqual(sectionIds(html), V2_IDS);
+  assert.deepEqual(sectionNums(html), ["01", "02", "03", "04", "05", "06", "07", "08"]);
+  assert.deepEqual(chipHrefs(html), V2_IDS);
+  assert.equal((html.match(/<h1>/g) || []).length, 1, "still exactly one h1");
+  assert.match(html, /<span class="num">01<\/span>The week in review<\/h2>/);
+  assert.match(html, /<span class="num">02<\/span>Level estimate<\/h2>/);
+  assert.match(html, /<span class="num">03<\/span>The class log<\/h2>/);
+  assert.match(html, /<span class="num">07<\/span>Practice — tap to reveal<\/h2>/);
+  assert.match(html, /<span class="num">08<\/span>Plan for the week of Jun 1–7<\/h2>/);
+});
+
+test("v2: numbering stays sequential when only SOME optional blocks are present (chips follow)", () => {
+  const levelOnly = renderWeek(goldenWeekV2({ review: undefined, plan: undefined }));
+  assert.deepEqual(sectionIds(levelOnly), ["m-level", ...LEGACY_IDS]);
+  assert.deepEqual(sectionNums(levelOnly), ["01", "02", "03", "04", "05", "06"]);
+  assert.deepEqual(chipHrefs(levelOnly), ["m-level", ...LEGACY_IDS]);
+  const planOnly = renderWeek(goldenWeekV2({ review: null, level: null }));
+  assert.deepEqual(sectionIds(planOnly), [...LEGACY_IDS, "m-plan"]);
+  assert.deepEqual(sectionNums(planOnly), ["01", "02", "03", "04", "05", "06"]);
+  assert.match(planOnly, /<span class="num">06<\/span>Plan for the week of/);
+});
+
+test("v2: the header names the tutor and each class card reads '· with <tutor>' after the title-or-topic", () => {
+  const html = renderWeek(goldenWeekV2());
+  assert.match(html, /<p class="sub">2 classes with Niki V\. · published/);
+  // Generic "Pro Lesson" topic → the LLM title shows (escaped), never the generic topic.
+  assert.ok(html.includes(">30 min · Lunch breaks &amp; indoor workdays &lt;script&gt;t()&lt;/script&gt; · with Niki V.</span>"), "title + tutor on card 1");
+  assert.ok(!html.includes("Pro Lesson"), "the generic topic is not displayed when a title exists");
+  // title:null → the topic shows (softened by displayTopic), still with the tutor.
+  assert.ok(html.includes(">60 min · Screen habits &lt;script&gt;alert(1)&lt;/script&gt; · with Niki V.</span>"), "topic + tutor on card 2");
+  // The legacy fixture (specific topic, tutor "Alex R.") reads topic + tutor.
+  assert.ok(renderWeek(goldenWeek()).includes(">30 min · Food for Thought · with Alex R.</span>"), "topic + tutor on the legacy card");
+});
+
+test("v2: a class with an empty tutor renders no '· with' suffix", () => {
+  const vm = goldenWeekV2();
+  vm.classes[1].tutor = "";
+  const html = renderWeek(vm);
+  assert.ok(html.includes(">60 min · Screen habits &lt;script&gt;alert(1)&lt;/script&gt;</span>"), "no dangling with");
+});
+
+test("v2: the Focus box gains a 'Work on' line (accent-edged), escaped, only when workOn is present", () => {
+  const html = renderWeek(goldenWeekV2());
+  assert.ok(html.includes('<p class="fwork"><b>Work on</b>Put the article before every singular count noun &lt;script&gt;w()&lt;/script&gt;</p>'), "work-on line rendered + escaped");
+  // The line sits inside the Focus box, after the AI summary and before Next focus.
+  const focus = /<div class="focus">([\s\S]*?)<\/div><\/article>/.exec(html)[1];
+  assert.ok(focus.indexOf('class="fai"') < focus.indexOf('class="fwork"') && focus.indexOf('class="fwork"') < focus.indexOf('class="fnext"'));
+  // recentWeek has no workOn → no line.
+  assert.ok(!renderWeek(recentWeek()).includes('class="fwork"'));
+});
+
+test("v2: a transcript-derived grammar row carries the <i class=\"src\">transcript</i> tag and the subtitle splits the counts", () => {
+  const html = renderWeek(goldenWeekV2());
+  assert.ok(html.includes('<span class="fix">I go to the office every day</span><i class="src">transcript</i>'), "derived row tagged");
+  assert.equal((html.match(/<i class="src">transcript<\/i>/g) || []).length, 1, "only the derived row is tagged");
+  assert.match(html, /<p class="ssub">3 grammar fixes — 2 flagged by Cambly · 1 spotted in your transcript, grouped into 2 habits\. Strike = what you said\.<\/p>/);
+  assert.ok(html.includes("I go to office every day &lt;script&gt;g()&lt;/script&gt;"), "derived said escaped");
+  // The header stat equals the section total (3), not the Σ anchor (4) nor anchored-only (2).
+  assert.match(html, /<div class="n">3<\/div><div class="l">corrections<\/div>/);
+});
+
+test("v2: grammar subtitle keeps the legacy sentence when every row is Cambly-flagged, and says so when every row is derived", () => {
+  assert.match(renderWeek(goldenWeek()), /<p class="ssub">All 2 grammar fixes from the week, grouped into 1 habit\. Strike = what you said\.<\/p>/);
+  const allDerived = goldenWeekV2({
+    grammarGroups: [goldenWeekV2().grammarGroups[1]],
+    vocabulary: goldenWeekV2().vocabulary.map((v) => ({ ...v, fromCorrectionId: null })),
+    phrasing: goldenWeekV2().phrasing.map((p) => ({ ...p, fromCorrectionId: null })),
+    stats: { classes: 2, minutes: 90, corrections: 1, expressions: 3 },
+    integrity: { reportedCorrections: 0, renderedGrammar: 1, derivedGrammar: 1, renderedVocab: 0, renderedPhrasing: 0, rejectedCount: 0 },
+  });
+  assert.match(renderWeek(allDerived), /<p class="ssub">1 grammar fix — 1 spotted in your transcript, grouped into 1 habit\. Strike = what you said\.<\/p>/);
+});
+
+test("v2: a vocab card with no clean quote shows the model sentence as an 'e.g.' line (escaped); a card with a quote never shows one", () => {
+  const html = renderWeek(goldenWeekV2());
+  assert.ok(html.includes('<p class="veg">e.g. I&#39;m completely swamped with work today &lt;script&gt;e()&lt;/script&gt;</p>'), "e.g. line rendered + escaped");
+  assert.equal((html.match(/class="veg"/g) || []).length, 1, "only the quote-less card gets an e.g. line");
+  const swamped = /<div class="vword"><div class="w"><b>swamped<\/b>[\s\S]*?<\/div><\/div>/.exec(html)[0];
+  assert.ok(!swamped.includes('class="vq"'), "no quote line on the e.g. card");
+  // example present but a quote also present → the quote wins (defensive).
+  const both = goldenWeekV2();
+  both.vocabulary[0].example = "should not show";
+  assert.ok(!renderWeek(both).includes("should not show"));
+});
+
+test("v2 XSS: every new field (title, workOn, example, derived said, review, level, plan) renders escaped — zero live script tags", () => {
+  const html = renderWeek(goldenWeekV2());
+  const probes = ["t()", "w()", "e()", "g()", "r()", "ww()", "nw()", "d()", "ls()", "a()", "p()", "pi()", "at()"];
+  for (const p of probes) {
+    assert.ok(html.includes(`&lt;script&gt;${p}&lt;/script&gt;`), `probe ${p} escaped`);
+    assert.ok(!html.includes(`<script>${p}</script>`), `probe ${p} never live`);
+  }
+  // The only <script> tags on the page are the head boot line and the reveal mechanic.
+  assert.equal((html.match(/<script>/g) || []).length, 2);
+});
+
+test("v2: the level band is the page's one big number and the page stays self-contained + within budget", () => {
+  const html = renderWeek(goldenWeekV2());
+  assert.match(html, /<span class="lvbig">B1\+<\/span>/);
+  assert.equal((html.match(/class="lvbig"/g) || []).length, 1);
+  assert.ok(!/(?:src|href)\s*=\s*["']\s*(?:https?:)?\/\//i.test(html), "no external resource");
+  assert.ok(Buffer.byteLength(html, "utf8") < 200 * 1024);
 });

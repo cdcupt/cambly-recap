@@ -5,26 +5,41 @@
 // HTML — rendering is the frontend renderer's job (§F1). Enforcement points:
 //
 //   Gate #1 quote-guard  — every ▣ field (vocabulary.quote, phrasing.said, each
-//     classes[].moment.quotes entry) must substring-match the lesson's quote corpus
-//     after NFKC + curly→straight + whitespace-collapse (case-preserving), on the
-//     side matching quoteBy. Fail ⇒ dropped + logged, never rendered. Practice items
-//     carry no verbatim field and are gated by lineage instead.
+//     classes[].moment.quotes entry, each transcript-derived grammar `said`, each
+//     review quote) must substring-match ONE line of the lesson's quote corpus after
+//     NFKC + curly→straight + whitespace-collapse, compared case-insensitively (the
+//     LLM capitalises the first word of a mid-sentence span), on the side matching
+//     quoteBy. Fail ⇒ dropped + logged (review quotes: nulled, item kept), never
+//     rendered. Practice items carry no verbatim field and are gated by lineage.
 //
-//   Gate #2 Σ-invariant  — the multiset of placed correction ids (grammar items ∪
-//     non-null vocabulary.fromCorrectionId ∪ non-null phrasing.fromCorrectionId) must
-//     equal the raw corrective-feedback id set. Missing ⇒ self-healed into an
+//   Gate #2 Σ-invariant  — the multiset of placed correction ids (anchored grammar
+//     items ∪ non-null vocabulary.fromCorrectionId ∪ non-null phrasing.fromCorrectionId)
+//     must equal the raw corrective-feedback id set. Missing ⇒ self-healed into an
 //     "Other fixes" group (rule:null) from the raw record; duplicate ⇒ first placement
-//     wins, the later reference stripped; invented ⇒ dropped. All logged.
+//     wins, the later reference stripped; invented ⇒ dropped. All logged. Transcript-
+//     derived grammar items (correctionId null, derived:true) sit OUTSIDE Σ.
 //
 // The composed VM satisfies the §10 hard gate by construction:
-//   integrity.reportedCorrections === renderedGrammar + renderedVocab + renderedPhrasing.
-// stats.corrections is the USER-FACING count and equals renderedGrammar — what the
-// Grammar section actually lists — so the header stat, the index "N fixes" badge, and
-// the section total always agree; the raw Cambly-reported total lives only in integrity.
+//   integrity.reportedCorrections === anchoredGrammar + renderedVocab + renderedPhrasing.
+// stats.corrections is the USER-FACING count and equals renderedGrammar (anchored +
+// derived) — what the Grammar section actually lists — so the header stat, the index
+// "N fixes" badge, and the section total always agree; the raw Cambly-reported total
+// lives only in integrity.
 
-import { cstIso, resolveNow } from "./week.js";
+import { cstIso, resolveNow, weekWindow, weekIdToStartMs, MS_DAY } from "./week.js";
 import { normalizeQuote } from "./quote.js";
 import { cleanCorrectionText } from "./normalize.js";
+import {
+  stripWorksheet,
+  stripWorksheetStrict,
+  coachNotes,
+  BANDS,
+  LEVEL_DIMENSIONS,
+  CONFIDENCE_LEVELS,
+  PLAN_DAYS,
+  LEVEL_ADVICE_MAX,
+  bandIndexOf,
+} from "./coach.js";
 import {
   summarizeWeek,
   openaiModel,
@@ -60,11 +75,18 @@ export class SummarizeQualityError extends Error {
 // Re-exported here because build tests import it from this module.
 export { normalizeQuote };
 
-/** Per-lesson quote corpus split by side. Feedback (tutor notes) is tutor-side. */
+/**
+ * Per-lesson quote corpus split by side. Transcript lines come from the normalizer's
+ * merged `segments` (whole speaker turns — what the LLM read and quoted from) when
+ * present, else the raw `transcript` fragments. Chat is per side; feedback (tutor
+ * notes) is tutor-side.
+ */
 export function quoteCorpus(lesson) {
   const student = [];
   const tutor = [];
-  for (const t of lesson.transcript || []) {
+  const lines =
+    Array.isArray(lesson.segments) && lesson.segments.length ? lesson.segments : lesson.transcript || [];
+  for (const t of lines) {
     (t.speaker === "student" ? student : tutor).push(t.text);
   }
   for (const m of lesson.chat || []) {
@@ -74,16 +96,22 @@ export function quoteCorpus(lesson) {
   return { student, tutor, any: [...student, ...tutor] };
 }
 
+const EMPTY_CORPUS = Object.freeze({ student: [], tutor: [], any: [] });
+
 /**
  * True iff `quote` is a verbatim (normalized) substring of at least one single line on
  * the requested side. Matching is per-line — never a concatenated corpus — so a quote
- * that spans two turns is correctly rejected (U-QG ⑧). Empty/whitespace-only ⇒ false.
+ * that spans two turns is correctly rejected (U-QG ⑧). The comparison is CASE-
+ * INSENSITIVE (both sides lower-cased after `normalizeQuote`, which itself stays
+ * case-preserving): the LLM capitalises the first word of a mid-sentence span ("If I
+ * have two choice…" vs "…think if I have two choice…") and that is not a real
+ * mismatch. Empty/whitespace-only ⇒ false.
  */
 export function quoteMatches(quote, corpus, side = "any") {
-  const needle = normalizeQuote(quote);
+  const needle = normalizeQuote(quote).toLowerCase();
   if (!needle) return false;
   const lines = corpus[side] || [];
-  return lines.some((line) => normalizeQuote(line).includes(needle));
+  return lines.some((line) => normalizeQuote(line).toLowerCase().includes(needle));
 }
 
 // ── Small helpers ──────────────────────────────────────────────────────────────
@@ -274,74 +302,45 @@ function aiFeedbackProse(v) {
   return null;
 }
 
-// Worksheet/exercise markers Cambly sometimes pastes after the real coaching sentences.
-// These fire ONLY on lines that are STRUCTURALLY drill material, never on ordinary coaching
-// prose (beta findings 1 + 2). A leading decorative emoji is stripped before matching so a
-// celebratory opener ("🎉 Amazing progress this week! …") is judged on its words, and the
-// drill keywords are anchored to line-start so "exercise"/"choose the correct" never fire as
-// mid-sentence words ("you did this breathing exercise 3 times").
-const LEADING_EMOJI = /^(?:\p{Extended_Pictographic}[\uFE0F\u200D]*)+\s*/u;
-const SECTION_TITLE_MAX = 56;
+// Worksheet stripping lives in ./coach.js (shared with the summarizer's bundle so the
+// Focus box and the LLM's input can never disagree about what counts as coaching).
+// Re-exported here because build tests and older callers import it from this module.
+export { stripWorksheet, stripWorksheetStrict };
 
-// HARD drill markers — unambiguous worksheet content; always a boundary (tested post
-// emoji-strip so an emoji-led "✏️ Exercise 1: …" still matches the line-start anchor).
-const DRILL_MARKER = [
-  /^exercise\s*\d/i,                        // "Exercise 1: Choose the Correct Verb"
-  /^choose the correct\b/i,                 // multiple-choice drill instruction
-  /^fix the .{0,24}\bmistakes\b/i,          // "Fix the … Mistakes" header
-  /_{4,}/,                                   // a fill-in-the-blank run  ______  /  → ______
-  /^\d+[.)]\s+[^\n]*\([^)]*\/[^)]*\)/,       // "1. Yesterday I (go / went / gone) home." drill item
-];
+// Generic lesson-plan titles that say nothing about the class ("Pro Lesson"). Only for
+// these does the LLM's specific title (RULE 12) stand in for the topic on the class card.
+const GENERIC_TOPICS = new Set(["", "pro lesson", "kickoff conversation", "conversation"]);
+const TITLE_MAX_WORDS = 12;
 
-/** True iff a line is an emoji-led section title (short, no sentence-ending punctuation). */
-function isEmojiSectionTitle(t) {
-  if (!LEADING_EMOJI.test(t)) return false;
-  const bare = t.replace(LEADING_EMOJI, "").trim();
-  if (!bare || bare.length > SECTION_TITLE_MAX) return false;
-  return !/[.!?…]$/u.test(bare); // a real coaching sentence ends in . ! ? …
-}
-
-/** "hard" (drill marker), "soft" (emoji section title), or "none" for a coaching line. */
-function worksheetBoundary(rawLine) {
-  const t = rawLine.trim();
-  if (!t) return "none";
-  const bare = t.replace(LEADING_EMOJI, "").trim() || t;
-  if (DRILL_MARKER.some((re) => re.test(bare))) return "hard";
-  if (isEmojiSectionTitle(t)) return "soft";
-  return "none";
+/** True iff a lesson topic is missing or one of Cambly's generic lesson-plan titles. */
+export function isGenericTopic(topic) {
+  return GENERIC_TOPICS.has(foldText(typeof topic === "string" ? topic : ""));
 }
 
 /**
- * Curated coaching prose ONLY — the worksheet/exercise tail Cambly sometimes pastes into
- * an ai_tutor field (finalAIFeedback.whatYouDidWell / tutorNotes) is truncated so the
- * "Focus & tutor feedback" box never shows drill material (beta finding 1). Cuts at the
- * FIRST worksheet-marker line — an emoji-led section title, a line-start "Exercise N" /
- * "Choose the Correct" / "Fix the … Mistakes" header, a run of blank-fill underscores, or a
- * numbered drill item that carries slash options — keeping every genuine coaching sentence
- * before it. A bare celebratory emoji or a plain enumerated coaching tip ("1. Watch your
- * articles.") is NOT a boundary. A non-string passes through untouched; a value that is
- * entirely HARD-marker worksheet collapses to null, but a leading emoji title never nulls
- * the coaching (finding 1) — it is far more likely a decorative opener than a real drill.
+ * classes[].title — the LLM's specific 3–7 word title of what the class was about, used
+ * ONLY when the lesson topic is generic. A blank, generic ("Pro Lesson") or over-long wire
+ * title yields null, and a specific topic always wins (title null).
  */
-export function stripWorksheet(text) {
-  if (typeof text !== "string") return text;
-  const lines = text.split("\n");
-  let cut = -1;
-  let kind = "none";
-  for (let i = 0; i < lines.length; i++) {
-    const k = worksheetBoundary(lines[i]);
-    if (k !== "none") {
-      cut = i;
-      kind = k;
-      break;
-    }
-  }
-  if (cut === -1) return text; // no worksheet tail — unchanged
-  const kept = lines.slice(0, cut).join("\n").replace(/\s+$/u, "");
-  if (kept !== "") return kept;
-  // Nothing kept: a HARD drill marker as the first content line ⇒ all worksheet ⇒ null; a
-  // leading emoji title never erases genuine coaching (finding 1) ⇒ keep the text as-is.
-  return kind === "hard" ? null : text;
+function classTitle(topic, wireTitle) {
+  if (!isGenericTopic(topic) || !hasStr(wireTitle)) return null;
+  const t = wireTitle.trim();
+  if (isGenericTopic(t) || wordCount(t) > TITLE_MAX_WORDS) return null;
+  return t;
+}
+
+/**
+ * The LLM-authored model sentence for a vocabulary card (RULE 8), shown ONLY when no clean
+ * verbatim quote survived. Kept iff it is a short (≤ VOCAB_EXAMPLE_MAX_WORDS) real usage of
+ * the term that is neither a definition nor a flagged error form; else null.
+ */
+function vocabExampleOf(example, term, errorForms) {
+  if (!hasStr(example)) return null;
+  if (!quoteContainsTerm(example, term)) return null;
+  if (definesTerm(example, term)) return null;
+  if (wordCount(example) > VOCAB_EXAMPLE_MAX_WORDS) return null;
+  if (matchesErrorForm(example, errorForms)) return null;
+  return example.trim();
 }
 
 /** Normalize a line for sign-off duplicate detection: letters/digits/space, lower-case. */
@@ -395,10 +394,132 @@ function tutorFocusOf(lesson) {
   return {
     // Worksheet/exercise tails are stripped so the Focus box shows coaching prose only.
     aiFeedback: stripWorksheet(aiFeedbackProse(f.finalAIFeedback)),
+    // Cambly's whatWeCanWorkOn — STRICT strip: a pasted vocabulary worksheet (emoji title
+    // first) is not coaching and becomes null rather than a "Work on" line of drill text.
+    workOn: coachNotes(f).workOn,
     tutorNotes: stripWorksheet(f.tutorNotes ?? null),
     tutorNotesZh: f.tutorNotesTranslated ?? null,
     nextFocus: f.finalSuggestedNextLesson ?? null,
   };
+}
+
+// ── review / level / plan composition (RULES 9–11) ───────────────────────────────
+
+const REVIEW_WENT_WELL_MAX = 4;
+const REVIEW_NEEDS_WORK_MAX = 6;
+const PLAN_ITEMS_MAX = 7;
+const PLAN_ASK_MAX = 3;
+/** RULE 6 caps for transcript-derived grammar items. */
+export const DERIVED_GRAMMAR_MAX = 12;
+export const DERIVED_SAID_MAX_WORDS = 25;
+
+const arr = (v) => (Array.isArray(v) ? v : []);
+
+/**
+ * WeekVM.review from the wire block. The summary is required (else the block is omitted
+ * and logged). Each point/issue keeps its optional verbatim quote only when the guard
+ * matches it in the cited lesson — any side for wentWell, student side for needsWork; a
+ * miss NULLS the quote and keeps the item. Blank items are dropped; lists are capped.
+ * @returns {object|undefined} undefined ⇒ no `review` key on the VM
+ */
+function composeReview(wireReview, { guard, corpusFor, byLesson, logReject }) {
+  if (!wireReview || typeof wireReview !== "object") return undefined;
+  if (!hasStr(wireReview.summary)) {
+    logReject({ type: "review", dropped: true, section: "review", reason: "empty summary → review omitted" });
+    return undefined;
+  }
+  const guardedQuote = (item, side) => {
+    const lessonId = byLesson.has(item.lessonId) ? item.lessonId : null;
+    if (!hasStr(item.quote)) return { quote: null, lessonId };
+    if (lessonId === null) {
+      logReject({ type: "quote-guard", dropped: false, section: "review", quote: item.quote, quoteBy: side, reason: "lessonId not in this week → quote nulled" });
+      return { quote: null, lessonId };
+    }
+    const ok = guard(item.quote, corpusFor(lessonId), side, { section: "review", lessonId, dropped: false });
+    return { quote: ok ? item.quote : null, lessonId };
+  };
+  const wentWell = arr(wireReview.wentWell)
+    .filter((w) => w && hasStr(w.point))
+    .slice(0, REVIEW_WENT_WELL_MAX)
+    .map((w) => ({ point: w.point, ...guardedQuote(w, "any") }));
+  const needsWork = arr(wireReview.needsWork)
+    .filter((n) => n && hasStr(n.issue) && hasStr(n.fix))
+    .slice(0, REVIEW_NEEDS_WORK_MAX)
+    .map((n) => ({ issue: n.issue, fix: n.fix, ...guardedQuote(n, "student") }));
+  return { summary: wireReview.summary, wentWell, needsWork };
+}
+
+/**
+ * WeekVM.level from the wire block. `overall` must be a known band and `summary` non-empty
+ * (else omitted + logged); an unknown confidence falls back to "low"; dimensions are
+ * normalised to EXACTLY the five canonical names in canonical order (a missing or invalid
+ * one inherits the overall band with empty evidence, logged); advice keeps up to three
+ * valid items and is never padded with invented text.
+ * @returns {object|undefined} undefined ⇒ no `level` key on the VM
+ */
+function composeLevel(wireLevel, { logReject }) {
+  if (!wireLevel || typeof wireLevel !== "object") return undefined;
+  const overallIdx = bandIndexOf(wireLevel.overall);
+  if (overallIdx === -1 || !hasStr(wireLevel.summary)) {
+    const reason =
+      overallIdx === -1
+        ? `unknown band ${JSON.stringify(wireLevel.overall ?? null)} → level omitted`
+        : "empty summary → level omitted";
+    logReject({ type: "level", dropped: true, section: "level", reason });
+    return undefined;
+  }
+  const confidence = CONFIDENCE_LEVELS.includes(wireLevel.confidence) ? wireLevel.confidence : "low";
+  const wireDims = arr(wireLevel.dimensions).filter((d) => d && typeof d === "object");
+  const dimensions = LEVEL_DIMENSIONS.map((name) => {
+    const d = wireDims.find(
+      (x) => typeof x.name === "string" && x.name.trim().toLowerCase() === name && bandIndexOf(x.band) !== -1,
+    );
+    if (!d) {
+      logReject({ type: "level", dropped: false, section: "level", reason: `dimension "${name}" missing or invalid → inherits the overall band` });
+      return { name, band: BANDS[overallIdx], bandIndex: overallIdx, evidence: "" };
+    }
+    return { name, band: d.band, bandIndex: bandIndexOf(d.band), evidence: typeof d.evidence === "string" ? d.evidence : "" };
+  });
+  const advice = arr(wireLevel.advice)
+    .filter((a) => a && hasStr(a.title) && hasStr(a.detail))
+    .slice(0, LEVEL_ADVICE_MAX)
+    .map((a) => ({ title: a.title, detail: a.detail }));
+  return { overall: BANDS[overallIdx], bandIndex: overallIdx, confidence, dimensions, summary: wireLevel.summary, advice };
+}
+
+/**
+ * Display label of the week AFTER the given window — the plan is for next week. Derived
+ * from the weekId alone (CST Monday + 7 days) so it never depends on a caller's endMs.
+ * @param {{weekId:string}} window
+ * @returns {string} e.g. "Sep 7–13"
+ */
+export function nextWeekLabel(window) {
+  return weekWindow(weekIdToStartMs(window.weekId) + 7 * MS_DAY).weekLabel;
+}
+
+/**
+ * WeekVM.plan from the wire block. `focus` and at least one valid item are required (else
+ * omitted + logged); an item needs a known day label and a task (blank/unknown ones are
+ * dropped + logged); lists are capped; `weekLabel` is builder-derived for the next week.
+ * @returns {object|undefined} undefined ⇒ no `plan` key on the VM
+ */
+function composePlan(wirePlan, window, { logReject }) {
+  if (!wirePlan || typeof wirePlan !== "object") return undefined;
+  const rawItems = arr(wirePlan.items);
+  const valid = rawItems.filter((it) => it && PLAN_DAYS.includes(it.day) && hasStr(it.task));
+  if (valid.length < rawItems.length) {
+    logReject({ type: "plan", dropped: false, section: "plan", reason: `${rawItems.length - valid.length} plan item(s) with an unknown day or empty task dropped` });
+  }
+  const items = valid
+    .slice(0, PLAN_ITEMS_MAX)
+    .map((it) => ({ day: it.day, task: it.task, why: typeof it.why === "string" ? it.why : "" }));
+  if (!hasStr(wirePlan.focus) || items.length === 0) {
+    const reason = !hasStr(wirePlan.focus) ? "empty focus → plan omitted" : "no valid items → plan omitted";
+    logReject({ type: "plan", dropped: true, section: "plan", reason });
+    return undefined;
+  }
+  const askTutor = arr(wirePlan.askTutor).filter(hasStr).slice(0, PLAN_ASK_MAX);
+  return { weekLabel: nextWeekLabel(window), focus: wirePlan.focus, items, askTutor };
 }
 
 /** id → { said, fix, why, lessonId } for every raw correction across the week (the Σ anchor). */
@@ -439,14 +560,24 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
 
   let quoteItemsTotal = 0;
   let quoteItemsRejected = 0;
-  const guard = (quote, corpus, side, meta) => {
+  // `dropped:false` marks a guarded field whose miss nulls the quote but keeps the item
+  // (review quotes); the miss still counts toward the corrective re-prompt ratio.
+  const guard = (quote, corpus, side, { dropped = true, ...meta } = {}) => {
     quoteItemsTotal += 1;
     const ok = quoteMatches(quote, corpus, side);
     if (!ok) {
       quoteItemsRejected += 1;
-      logReject({ type: "quote-guard", dropped: true, quote, quoteBy: side, reason: "no verbatim match", ...meta });
+      const reason = dropped ? "no verbatim match" : "no verbatim match → quote nulled, item kept";
+      logReject({ type: "quote-guard", dropped, quote, quoteBy: side, reason, ...meta });
     }
     return ok;
+  };
+  // One corpus per lesson, built lazily and shared by every guarded section.
+  const corpusCache = new Map();
+  const corpusFor = (lessonId) => {
+    if (!byLesson.has(lessonId)) return EMPTY_CORPUS;
+    if (!corpusCache.has(lessonId)) corpusCache.set(lessonId, quoteCorpus(byLesson.get(lessonId)));
+    return corpusCache.get(lessonId);
   };
 
   // ── classes[] — ONE card per normalized lesson (builder-owned, §10). The wire
@@ -470,7 +601,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   const classes = lessons
     .map((l) => {
       const c = wireByLesson.get(l.lessonId) || {};
-      const corpus = quoteCorpus(l);
+      const corpus = corpusFor(l.lessonId);
       const momentText = c.moment?.text ?? "";
       const rawQuotes = Array.isArray(c.moment?.quotes) ? c.moment.quotes : [];
       // Corpus-only guard (see the section comment): a highlight must be a verbatim
@@ -487,6 +618,8 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
         startAt: l.startAtCST,
         minutes: intOr0(l.minutes),
         topic: l.topic || "",
+        // RULE 12: a specific LLM title stands in ONLY for a generic topic ("Pro Lesson").
+        title: classTitle(l.topic, c.title),
         tutor: l.tutor || "",
         stats: {
           wpm: intOr0(l.stats?.wpm),
@@ -516,6 +649,10 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   for (const p of Array.isArray(wire.phrasing) ? wire.phrasing : []) {
     if (p && hasStr(p.said)) errorForms.push(p.said);
   }
+  // …and the transcript-derived grammar candidates' own `said` spans (RULE 6).
+  for (const g of Array.isArray(wire.grammarGroups) ? wire.grammarGroups : []) {
+    for (const it of Array.isArray(g?.items) ? g.items : []) if (it && hasStr(it.said)) errorForms.push(it.said);
+  }
   // Fold-count every candidate example so an example repeated verbatim across two cards (a
   // tutor reciting a vocab list) is dropped from ALL of them, not just the later copies.
   const exampleFreq = new Map();
@@ -527,8 +664,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   }
   const vocabulary = [];
   wireVocab.forEach((v) => {
-    const l = byLesson.get(v.lessonId);
-    const corpus = l ? quoteCorpus(l) : { student: [], tutor: [], any: [] };
+    const corpus = corpusFor(v.lessonId);
     const side = v.quoteBy === "tutor" ? "tutor" : "student";
     if (!guard(v.quote, corpus, side, { section: "vocabulary", lessonId: v.lessonId })) return;
     // The quote is a verbatim line — but a flashcard example is only KEPT when it is a real,
@@ -546,6 +682,8 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
       meaning: v.meaning,
       quote: hasExample ? v.quote : null,
       quoteBy: hasExample ? side : null,
+      // RULE 8: the LLM's model sentence fills in ONLY when no clean verbatim usage survived.
+      example: hasExample ? null : vocabExampleOf(v.example, v.term, errorForms),
       lessonId: v.lessonId,
       fromCorrectionId: v.fromCorrectionId ?? null,
     });
@@ -555,9 +693,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   const wirePhrasing = Array.isArray(wire.phrasing) ? wire.phrasing : [];
   const phrasing = [];
   wirePhrasing.forEach((p) => {
-    const l = byLesson.get(p.lessonId);
-    const corpus = l ? quoteCorpus(l) : { student: [], tutor: [], any: [] };
-    if (!guard(p.said, corpus, "student", { section: "phrasing", lessonId: p.lessonId })) return;
+    if (!guard(p.said, corpusFor(p.lessonId), "student", { section: "phrasing", lessonId: p.lessonId })) return;
     phrasing.push({
       id: `ph-${phrasing.length + 1}`,
       said: p.said,
@@ -568,13 +704,51 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
     });
   });
 
+  // ── RULE 6 — transcript-derived grammar items (correctionId null) ─────────────
+  // The LLM's own said/fix for an error it spotted in the student's speech. Accepted
+  // only when `said` is a verbatim STUDENT span (case-insensitive corpus guard), the
+  // span is short, `fix` actually differs, the lesson is this week's, the span is not a
+  // duplicate, and the week-wide cap holds. Ids "g-d<n>", derived:true, OUTSIDE Σ.
+  const derivedSeen = new Set();
+  let derivedCount = 0;
+  const deriveGrammarItem = (it) => {
+    const drop = (reason) => {
+      logReject({ type: "derived-grammar", dropped: true, section: "grammar", lessonId: it.lessonId ?? null, said: it.said ?? null, reason });
+      return null;
+    };
+    if (!byLesson.has(it.lessonId)) return drop("lessonId not in this week");
+    if (!hasStr(it.said) || !hasStr(it.fix)) return drop("said/fix empty");
+    if (wordCount(it.said) > DERIVED_SAID_MAX_WORDS) return drop(`said longer than ${DERIVED_SAID_MAX_WORDS} words`);
+    if (foldLoose(it.said) === foldLoose(it.fix)) return drop("fix identical to said");
+    if (derivedSeen.has(foldLoose(it.said))) return drop("duplicate derived said");
+    if (derivedCount >= DERIVED_GRAMMAR_MAX) return drop(`more than ${DERIVED_GRAMMAR_MAX} derived items`);
+    if (!guard(it.said, corpusFor(it.lessonId), "student", { section: "grammar", lessonId: it.lessonId })) return null;
+    derivedSeen.add(foldLoose(it.said));
+    derivedCount += 1;
+    return {
+      id: `g-d${derivedCount}`,
+      said: it.said,
+      fix: it.fix,
+      why: cleanCorrectionText(it.why) ?? "",
+      lessonId: it.lessonId,
+      correctionId: null,
+      derived: true,
+    };
+  };
+
   // ── Σ placement — grammar first, so grammar wins duplicate ties ───────────────
   const claimed = new Set();
   const wireGroups = Array.isArray(wire.grammarGroups) ? wire.grammarGroups : [];
   const grammarGroups = [];
   for (const g of wireGroups) {
     const items = [];
-    for (const it of Array.isArray(g.items) ? g.items : []) {
+    for (const it of Array.isArray(g?.items) ? g.items : []) {
+      if (!it || typeof it !== "object") continue;
+      if (it.correctionId === null || it.correctionId === undefined) {
+        const derived = deriveGrammarItem(it);
+        if (derived) items.push(derived);
+        continue;
+      }
       const cid = it.correctionId;
       const raw = corrById.get(cid);
       if (!raw) {
@@ -596,6 +770,7 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
         why: cleanCorrectionText(it.why) ?? "",
         lessonId: raw.lessonId,
         correctionId: cid,
+        derived: false,
       });
     }
     if (items.length) grammarGroups.push({ pattern: humanizePattern(g.pattern), rule: g.rule ?? null, items });
@@ -627,10 +802,16 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
       const raw = corrById.get(cid);
       claimed.add(cid);
       logReject({ type: "self-heal", dropped: false, section: "grammar", correctionId: cid, reason: "unplaced correction rendered in Other fixes" });
-      return { id: `g-${cid}`, said: raw.said, fix: raw.fix, why: cleanCorrectionText(raw.why) ?? "", lessonId: raw.lessonId, correctionId: cid };
+      return { id: `g-${cid}`, said: raw.said, fix: raw.fix, why: cleanCorrectionText(raw.why) ?? "", lessonId: raw.lessonId, correctionId: cid, derived: false };
     });
     grammarGroups.push({ pattern: "Other fixes", rule: null, items });
   }
+
+  // ── review · level · plan (RULES 9–11) — optional blocks, omitted when unusable ──
+  const composeCtx = { guard, corpusFor, byLesson, logReject };
+  const review = composeReview(wire.review, composeCtx);
+  const level = composeLevel(wire.level, composeCtx);
+  const plan = composePlan(wire.plan, window, composeCtx);
 
   // ── practice[] — lineage gate (grammar-independent). A sourceId resolves against
   // ANY surviving rendered item — a grammar item id, a vocabulary id, a phrasing id, a
@@ -669,16 +850,23 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
   });
 
   // ── stats + integrity ─────────────────────────────────────────────────────────
+  // renderedGrammar = EVERY grammar row (anchored + derived) — what the section lists;
+  // anchoredGrammar = rows with a Cambly correctionId — the only ones inside Σ.
   const renderedGrammar = grammarGroups.reduce((n, g) => n + g.items.length, 0);
+  const anchoredGrammar = grammarGroups.reduce(
+    (n, g) => n + g.items.filter((it) => it.correctionId !== null && it.correctionId !== undefined).length,
+    0,
+  );
+  const derivedGrammar = renderedGrammar - anchoredGrammar;
   const renderedVocab = vocabulary.filter((v) => v.fromCorrectionId != null).length;
   const renderedPhrasing = phrasing.filter((p) => p.fromCorrectionId != null).length;
   const reportedCorrections = rawSigmaSet.size;
   const rejectedCount = rejects.filter((r) => r.dropped).length;
 
-  const sigmaSum = renderedGrammar + renderedVocab + renderedPhrasing;
+  const sigmaSum = anchoredGrammar + renderedVocab + renderedPhrasing;
   if (sigmaSum !== reportedCorrections) {
     throw new BuildIntegrityError(
-      `Σ-invariant failed: reported ${reportedCorrections} !== grammar ${renderedGrammar} + vocab ${renderedVocab} + phrasing ${renderedPhrasing}`,
+      `Σ-invariant failed: reported ${reportedCorrections} !== anchored grammar ${anchoredGrammar} + vocab ${renderedVocab} + phrasing ${renderedPhrasing}`,
     );
   }
 
@@ -687,9 +875,9 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
     // Summed from the lessons (not the rendered cards) so minutes can never drift
     // from classes when a wire class is omitted or duplicated (§10, builder-derived).
     minutes: lessons.reduce((n, l) => n + intOr0(l.minutes), 0),
-    // User-facing count == what the Grammar section lists (beta finding 4), so the header
-    // stat, the index "N fixes" badge, and the section total agree. The raw Cambly-reported
-    // Σ-set size stays in integrity.reportedCorrections (below), never surfaced as a stat.
+    // User-facing count == what the Grammar section lists (beta finding 4) — anchored AND
+    // derived rows — so the header stat, the index "N fixes" badge, and the section total
+    // agree. The raw Cambly-reported Σ-set size stays in integrity.reportedCorrections.
     corrections: renderedGrammar,
     expressions: vocabulary.length,
   };
@@ -708,9 +896,15 @@ export function buildWeekVM({ window, lessons, wire, model = openaiModel(), prom
     grammarGroups,
     phrasing,
     practice,
+    // Optional v2 blocks — present only when the wire supplied a usable one, so an older
+    // wire (and every older VM on disk) keeps exactly the legacy key set.
+    ...(review !== undefined ? { review } : {}),
+    ...(level !== undefined ? { level } : {}),
+    ...(plan !== undefined ? { plan } : {}),
     integrity: {
       reportedCorrections,
       renderedGrammar,
+      derivedGrammar,
       renderedVocab,
       renderedPhrasing,
       rejectedCount,
@@ -762,7 +956,7 @@ export async function generateWeekVM({
     return { weekVM: buildEmptyWeekVM({ window, model, now }), rejectRatio: 0, llmCalls: 0, reprompted: false };
   }
 
-  const bundle = buildWeekBundle(lessons);
+  const bundle = buildWeekBundle(lessons, { weekLabel: window?.weekLabel });
   let llmCalls = 0;
 
   let sum = await summarize({ bundle, model, ...summarizeOpts });

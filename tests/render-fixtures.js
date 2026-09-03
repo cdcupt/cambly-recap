@@ -134,6 +134,132 @@ export function goldenWeek(overrides = {}) {
 }
 
 /**
+ * The recap-v2 golden week: goldenWeek() plus EVERY new block — review · level · plan —
+ * and every new field: classes[].title (on a generic "Pro Lesson" topic), a tutor name on
+ * both cards, tutorFocus.workOn, a vocabulary `example` on a card with no clean quote, and
+ * one transcript-DERIVED grammar item (correctionId null, derived:true, id "g-d1") in its
+ * own "Articles" group. Σ: reported 4 = anchored 2 + vocab 1 + phrasing 1; the Grammar
+ * section lists 3 rows (2 anchored + 1 derived) so stats.corrections = 3 and
+ * integrity.derivedGrammar = 1. Every string is invented; each new field carries an
+ * XSS probe so the renderer's escaping is proven per field. goldenWeek() itself is left
+ * byte-stable for the legacy-shape (five-section) assertions.
+ */
+export function goldenWeekV2(overrides = {}) {
+  const base = goldenWeek();
+  const [c1, c2] = base.classes;
+  return {
+    ...base,
+    stats: { classes: 2, minutes: 90, corrections: 3, expressions: 3 },
+    classes: [
+      {
+        ...c1,
+        topic: "Pro Lesson", // generic → the LLM title stands in on the card
+        title: "Lunch breaks & indoor workdays <script>t()</script>", // XSS probe
+        tutor: "Niki V.",
+        tutorFocus: {
+          aiFeedback: "You kept a long story in the past tense without prompting.",
+          workOn: "Put the article before every singular count noun <script>w()</script>", // XSS probe
+          tutorNotes: null,
+          tutorNotesZh: null,
+          nextFocus: "Articles in technical explanations",
+        },
+      },
+      { ...c2, title: null, tutor: "Niki V." },
+    ],
+    vocabulary: [
+      ...base.vocabulary,
+      {
+        id: "v3",
+        term: "swamped",
+        meaning: "extremely busy",
+        quote: null,
+        quoteBy: null,
+        example: "I'm completely swamped with work today <script>e()</script>", // XSS probe
+        lessonId: "L1",
+        fromCorrectionId: null,
+      },
+    ],
+    grammarGroups: [
+      {
+        ...base.grammarGroups[0],
+        items: base.grammarGroups[0].items.map((it) => ({ ...it, derived: false })),
+      },
+      {
+        pattern: "Articles",
+        rule: "A singular count noun needs a, an or the in front of it.",
+        items: [
+          {
+            id: "g-d1",
+            said: "I go to office every day <script>g()</script>", // XSS probe
+            fix: "I go to the office every day",
+            why: "'office' is a singular count noun here",
+            lessonId: "L2",
+            correctionId: null,
+            derived: true,
+          },
+        ],
+      },
+    ],
+    review: {
+      summary:
+        "Two classes this week, both about work routines. Your past-tense narration held steady across long turns, and you asked more follow-up questions than last week. The two biggest issues are missing articles and third-person -s. <script>r()</script>", // XSS probe
+      wentWell: [
+        { point: "You kept the past tense steady across a long story", quote: "I cut out soda", lessonId: "L1" },
+        { point: "You asked follow-up questions instead of waiting <script>ww()</script>", quote: null, lessonId: null }, // XSS probe
+      ],
+      needsWork: [
+        { issue: "Missing articles before singular nouns", fix: "Say 'the office', 'a meeting'.", quote: "I go to office every day", lessonId: "L2" },
+        { issue: "Third-person -s <script>nw()</script>", fix: "After he / she / it the present verb takes -s.", quote: null, lessonId: null }, // XSS probe
+        { issue: "Long pauses before the verb", fix: "Start with the subject and keep going; repair afterwards.", quote: null, lessonId: "L1" },
+      ],
+    },
+    level: {
+      overall: "B1+",
+      bandIndex: 3,
+      confidence: "medium",
+      dimensions: [
+        { name: "range", band: "B1+", bandIndex: 3, evidence: "Work vocabulary is ready; abstract topics fall back to simple words." },
+        { name: "accuracy", band: "B1", bandIndex: 2, evidence: "Systematic slips on articles and third-person -s <script>d()</script>" }, // XSS probe
+        { name: "fluency", band: "B2", bandIndex: 4, evidence: "77 wpm with short pauses; self-repairs quickly." },
+        { name: "interaction", band: "B1+", bandIndex: 3, evidence: "Answers fully and asks back, rarely initiates a new thread." },
+        { name: "coherence", band: "B1+", bandIndex: 3, evidence: "Links ideas with and/but/because; longer turns lose their thread." },
+      ],
+      summary:
+        "Long, confident turns on familiar topics with systematic small slips put this week at B1+. B2 needs those slips to become occasional rather than regular. <script>ls()</script>", // XSS probe
+      advice: [
+        { title: "Articles on autopilot", detail: "Before every singular count noun, say a, an or the — even when it feels slow." },
+        { title: "Third-person -s drill", detail: "Narrate a colleague's day for two minutes: he checks, she sends, it fails." },
+        { title: "Open a topic yourself <script>a()</script>", detail: "Once per class, bring a question the tutor did not ask." }, // XSS probe
+      ],
+    },
+    plan: {
+      weekLabel: "Jun 1–7",
+      focus: "Articles before every singular count noun, in every sentence you say. <script>p()</script>", // XSS probe
+      items: [
+        { day: "Mon", task: "Re-read the two struck sentences above and say the fixed versions aloud five times.", why: "Fixes stick when spoken." },
+        { day: "Daily", task: "Describe your lunch in six sentences, one article per noun. <script>pi()</script>", why: "" }, // XSS probe, empty why
+        { day: "Wed", task: "Write five sentences about a colleague using he/she + verb-s.", why: "Third-person -s slipped twice." },
+        { day: "Fri", task: "Retell Thursday's class in the past tense for three minutes.", why: "Past narration is a strength — keep it." },
+        { day: "Sun", task: "Review the six vocabulary cards and use each in one sentence.", why: "Six new expressions this week." },
+      ],
+      askTutor: [
+        "Ask Niki to stop you on every missing article.",
+        "Ask for one read-aloud paragraph, then a retell without the text <script>at()</script>.", // XSS probe
+      ],
+    },
+    integrity: {
+      reportedCorrections: 4,
+      renderedGrammar: 3,
+      derivedGrammar: 1,
+      renderedVocab: 1,
+      renderedPhrasing: 1,
+      rejectedCount: 0,
+    },
+    ...overrides,
+  };
+}
+
+/**
  * A RECENT-data-shape non-empty week: zero grammar corrections, per-class ai_tutor
  * coaching (tutorFocus), real scheduledMinutes, one vocab expression and a practice
  * drill whose lineage resolves to a lessonId (grammar-independent). Σ closes on zero

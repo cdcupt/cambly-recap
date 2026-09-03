@@ -1,6 +1,9 @@
 // src/render/week.js — week page assembly (F1 · F4): head boot script, stale
-// banner, header + stat band, sticky chip nav, the six content blocks (five
-// sections; the class log is section 01), footer nav. The reveal mechanic is
+// banner, header + stat band, sticky chip nav, the content sections, footer nav.
+// The sections a week renders — and their "0N" numbers — derive from what the VM
+// carries: Review · Level · Classes · Vocabulary · Grammar · Phrasing · Practice ·
+// Plan, with the three v2 blocks (review / level / plan) optional. An older VM
+// renders exactly the five legacy sections as 01..05. The reveal mechanic is
 // shipped only when the week actually has practice cards.
 
 import { esc } from "./esc.js";
@@ -11,6 +14,7 @@ import {
   banner,
   statBand,
   chipNav,
+  sectionsFor,
   classesSection,
   vocabSection,
   grammarSection,
@@ -18,6 +22,7 @@ import {
   practiceSection,
   footerNav,
 } from "./components.js";
+import { reviewSection, levelSection, planSection } from "./sections.js";
 
 const MDOT = "·";
 const LARR = "←";
@@ -50,6 +55,20 @@ function headerBlock(vm) {
   );
 }
 
+/** The section renderers keyed like SECTION_DEFS; each receives its sequential "0N". */
+function sectionRenderers(vm, resolve) {
+  return {
+    review: (num) => reviewSection(vm, resolve, num),
+    level: (num) => levelSection(vm, num),
+    classes: (num) => classesSection(vm.classes, num),
+    vocab: (num) => vocabSection(vm.vocabulary, resolve, num),
+    grammar: (num) => grammarSection(vm.grammarGroups, resolve, num),
+    phrasing: (num) => phrasingSection(vm.phrasing, resolve, num),
+    practice: (num) => practiceSection(vm.practice, resolve, num),
+    plan: (num) => planSection(vm, num),
+  };
+}
+
 /**
  * Render a full week page to an HTML string.
  * @param {object} vm - a validated, Σ-checked non-empty WeekVM
@@ -58,18 +77,16 @@ function headerBlock(vm) {
 export function renderWeek(vm, { siteState = {}, prev = null, next = null } = {}) {
   const resolve = buildResolver(vm);
   const hasPractice = Array.isArray(vm.practice) && vm.practice.length > 0;
+  const render = sectionRenderers(vm, resolve);
+  const main = sectionsFor(vm)
+    .map((s) => render[s.key](s.num))
+    .join("");
 
   const body =
     banner(siteState) +
     headerBlock(vm) +
-    chipNav() +
-    `<main>` +
-    classesSection(vm.classes) +
-    vocabSection(vm.vocabulary, resolve) +
-    grammarSection(vm.grammarGroups, resolve) +
-    phrasingSection(vm.phrasing, resolve) +
-    practiceSection(vm.practice, resolve) +
-    `</main>` +
+    chipNav(vm) +
+    `<main>${main}</main>` +
     footerNav(prev, next);
 
   return htmlDocument({
