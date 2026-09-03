@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { renderIndex } from "../src/render/index.js";
+import { CHART_STYLES } from "../src/render/chart.js";
 import {
   goldenWeek,
   emptyWeek,
@@ -21,10 +22,12 @@ test("renderIndex: reverse-chron rows, derived totals summed across weeks", () =
   ];
   const html = renderIndex(weeks, { siteState: healthySiteState() });
 
-  // newest first
-  const a = html.indexOf("Week of May 25");
-  const b = html.indexOf("Week of May 18");
-  const c = html.indexOf("Week of May 11");
+  // newest first — measured inside the weeks list (the progress block above it
+  // names the same weeks in chronological order inside its sparkline titles)
+  const list = html.slice(html.indexOf('<ul class="weeks">'));
+  const a = list.indexOf("Week of May 25");
+  const b = list.indexOf("Week of May 18");
+  const c = list.indexOf("Week of May 11");
   assert.ok(a < b && b < c, "rows in reverse-chron order");
   // totals: 3 weeks · (1+1+2)=4 classes · (60+60+90)=210 min · (3+5+2)=10 corrections
   assert.match(html, /<i>3 weeks<\/i><i>4 classes<\/i><i>210 min<\/i><i>10 corrections<\/i>/);
@@ -94,6 +97,29 @@ test("clean-week framing: a 0-fix week reads 'Clean week ✓'; a fixed week keep
   assert.match(html, /<span class="wc">Clean week ✓<\/span>/, "0-fix week reframed to a clean-week label");
   assert.match(html, /<span class="wc">5 fixes<\/span>/, "non-zero week keeps the honest count");
   assert.ok(!html.includes(">0 fixes<"), "no '0 fixes' pill reads as scoring zero of a good thing");
+});
+
+test("C3 progress block sits between the header and the weeks list once two weeks exist, with its CSS injected once", () => {
+  const html = renderIndex(
+    [goldenWeek(), weekWith("2026-05-18", "May 18 – 24, 2026", 2), emptyWeek()],
+    { siteState: healthySiteState() },
+  );
+  const header = html.indexOf("</header>");
+  const progress = html.indexOf('<section class="pad progress"');
+  const nav = html.indexOf('<nav class="pad" aria-label="All weeks">');
+  assert.ok(progress > 0, "progress block present");
+  assert.ok(header < progress && progress < nav, "header → progress → weeks list");
+  assert.equal((html.match(/<style>/g) || []).length, 2, "layout STYLES + one CHART_STYLES block");
+  assert.ok(html.includes(`<style>${CHART_STYLES}</style>`));
+  // totals bar unchanged: 3 weeks · (2+1+0)=3 classes · (90+60+0)=150 min · (2+2+0)=4 corrections
+  assert.match(html, /<i>3 weeks<\/i><i>3 classes<\/i><i>150 min<\/i><i>4 corrections<\/i>/);
+});
+
+test("C3 progress block and its CSS are absent with a single published week", () => {
+  const html = renderIndex([goldenWeek(), emptyWeek()], { siteState: healthySiteState() });
+  assert.ok(!html.includes('class="pad progress"'));
+  assert.equal((html.match(/<style>/g) || []).length, 1, "only the layout stylesheet");
+  assert.ok(html.includes('class="firstrun'), "first-run intro still renders");
 });
 
 test("index subtitle is a non-committal cadence, with no publish day/time to contradict the week stamp", () => {
