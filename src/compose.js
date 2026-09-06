@@ -22,6 +22,11 @@ import {
   LEVEL_DIMENSIONS,
   CONFIDENCE_LEVELS,
   PLAN_DAYS,
+  PLAN_CATEGORIES,
+  deriveLabel,
+  categorize,
+  wordsOf,
+  LABEL_MAX_WORDS,
   LEVEL_ADVICE_MAX,
   bandIndexOf,
 } from "./coach.js";
@@ -158,6 +163,13 @@ const REVIEW_WENT_WELL_MAX = 4;
 const REVIEW_NEEDS_WORK_MAX = 6;
 const PLAN_ITEMS_MAX = 7;
 const PLAN_ASK_MAX = 3;
+export { deriveLabel, categorize };
+
+/** The wire label when it is short enough for a calendar cell, else one derived from the task. */
+function planLabel(it) {
+  const wire = typeof it.label === "string" ? it.label.trim().replace(/[.!]+$/u, "") : "";
+  return wire && wordsOf(wire).length <= LABEL_MAX_WORDS ? wire : deriveLabel(it.task);
+}
 
 /**
  * WeekVM.review from the wire block. The summary is required (else the block is omitted
@@ -258,7 +270,13 @@ export function composePlan(wirePlan, window, { logReject }) {
   }
   const items = valid
     .slice(0, PLAN_ITEMS_MAX)
-    .map((it) => ({ day: it.day, task: it.task, why: typeof it.why === "string" ? it.why : "" }));
+    .map((it) => ({
+      day: it.day,
+      label: planLabel(it),
+      category: categorize(it.task),
+      task: it.task,
+      why: typeof it.why === "string" ? it.why : "",
+    }));
   if (!hasStr(wirePlan.focus) || items.length === 0) {
     const reason = !hasStr(wirePlan.focus) ? "empty focus → plan omitted" : "no valid items → plan omitted";
     logReject({ type: "plan", dropped: true, section: "plan", reason });

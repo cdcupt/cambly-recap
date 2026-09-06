@@ -26,6 +26,8 @@ export const CONFIDENCE_LEVELS = Object.freeze(["low", "medium", "high"]);
 
 /** Plan day labels: the seven weekdays plus "Daily". */
 export const PLAN_DAYS = Object.freeze(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Daily"]);
+/** Plan-item categories (builder-derived from the task text; colour + chip on the week grid). */
+export const PLAN_CATEGORIES = Object.freeze(["grammar", "vocabulary", "speaking", "writing", "reading", "listening", "general"]);
 
 /** Exactly how many advice items the level estimate carries at most. */
 export const LEVEL_ADVICE_MAX = 3;
@@ -163,4 +165,58 @@ export function coachNotes(aiTutorFeedback) {
     practiceIdeas: strOrNull(stripWorksheetStrict(strOrNull(obj.ideasForPractice))),
     nextLesson: strOrNull(f.finalSuggestedNextLesson),
   };
+}
+
+// ── Plan labels + categories (shared by the builder and the renderer fallback) ──────
+
+export const LABEL_MAX_WORDS = 7;
+const LABEL_MIN_WORDS = 3;
+// Function words that start a trailing clause — a label ends BEFORE one of these once it has ≥ 3 words.
+const LABEL_CUT_WORDS = new Set(["then", "and", "using", "with", "about", "in", "for", "to", "while", "so", "by", "at", "on", "from", "into", "before", "after", "without", "until"]);
+
+export const wordsOf = (s) => String(s ?? "").trim().split(/\s+/).filter(Boolean);
+
+/**
+ * A short calendar label derived from a plan task when the summarizer gave none: the
+ * task's opening imperative clause — cut before the first clause-starting function word
+ * (after ≥ 3 words), at clause punctuation, or at an opening bracket — capped at 7 words.
+ * "Write 5–6 sentences about your day, then …" → "Write 5–6 sentences". Never empty for a
+ * non-empty task; display-only, so the full task stays available in the details list.
+ */
+export function deriveLabel(task) {
+  const ws = wordsOf(task);
+  if (ws.length === 0) return "";
+  const out = [];
+  for (const w of ws) {
+    if (out.length >= 2 && /^[(\[—–]/.test(w)) break;
+    const bare = w.toLowerCase().replace(/[^a-z/]/g, "");
+    if (out.length >= LABEL_MIN_WORDS && LABEL_CUT_WORDS.has(bare)) break;
+    out.push(w);
+    if (out.length >= 2 && /[,;:]$/.test(w)) break;
+    if (out.length >= LABEL_MAX_WORDS) break;
+  }
+  const label = out.join(" ").replace(/[\s,;:.!?—–-]+$/u, "").replace(/^[("“'\[]+/u, "");
+  const text = label || ws.slice(0, LABEL_MAX_WORDS).join(" ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// First match wins — a task that drills a tense while writing is grammar, not writing.
+// "article(s)" is the grammar word only outside a reading context ("read one article aloud").
+const ARTICLE = /\barticles?\b/i;
+const READING_CONTEXT = /\b(read|reading|aloud|news|summari[sz]e|engoo)\b/i;
+const CATEGORY_RULES = [
+  ["grammar", /\b(tenses?|plurals?|grammar|verbs?|comparatives?|prepositions?|word order|sentence structure|past simple|present perfect|agreement|a\/an)\b/i],
+  ["vocabulary", /\b(vocabulary|synonyms?|adjectives?|phrases?|expressions?|idioms?|collocations?|words?)\b/i],
+  ["speaking", /\b(say|speak|speaking|spoken|record|recording|explain|describe|retell|talk|aloud|out loud|pronounce|pronunciation|conversation)\b/i],
+  ["writing", /\b(write|writing|rewrite|journal|diary|draft|sentences?)\b/i],
+  ["reading", /\b(read|reading|article|paragraph|text)\b/i],
+  ["listening", /\b(listen|listening|podcast|video|watch|episode)\b/i],
+];
+
+/** The plan-item category (one of PLAN_CATEGORIES) inferred from the task text; "general" when nothing matches. */
+export function categorize(task) {
+  const t = String(task ?? "");
+  if (CATEGORY_RULES[0][1].test(t) || (ARTICLE.test(t) && !READING_CONTEXT.test(t))) return "grammar";
+  for (const [cat, re] of CATEGORY_RULES.slice(1)) if (re.test(t)) return cat;
+  return "general";
 }

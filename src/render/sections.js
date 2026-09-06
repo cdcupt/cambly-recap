@@ -11,6 +11,7 @@
 import { esc } from "./esc.js";
 import { dayChipUpper } from "./dates.js";
 import { sectionHead, weekLabelSpan } from "./components.js";
+import { PLAN_CATEGORIES, deriveLabel, categorize } from "../coach.js";
 import { BANDS } from "../coach.js";
 
 const MDOT = "·";
@@ -149,6 +150,43 @@ export function levelSection(vm, num = "02") {
 
 // ── Plan ─────────────────────────────────────────────────────────────────────────
 
+const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const CATEGORY_CHIP = { grammar: "Grammar", vocabulary: "Vocab", speaking: "Speak", writing: "Write", reading: "Read", listening: "Listen", general: "Practice" };
+
+// VMs built before labels/categories existed (and any wire that omitted them) fall back to the same
+// deterministic helpers the builder uses, so the grid never shows a full sentence as a label.
+const categoryOf = (it) => (PLAN_CATEGORIES.includes(it.category) ? it.category : categorize(it.task));
+const labelOf = (it) => (hasText(it.label) ? it.label : deriveLabel(it.task));
+
+/**
+ * The week grid — the plan as a picture: one row per task (short label + category chip),
+ * seven day columns; a "Daily" task is one bar across the week. Cells carry the full task
+ * as title/aria-label; the wording itself lives in the details list below the grid.
+ */
+function weekGrid(items) {
+  const head =
+    `<div class="wkhead" role="row"><span class="wklbl" aria-hidden="true"></span>` +
+    WEEK_DAYS.map((d) => `<span class="wkd" role="columnheader">${d.toUpperCase()}</span>`).join("") +
+    `</div>`;
+  const rows = items
+    .map((it) => {
+      const cat = categoryOf(it);
+      const label = labelOf(it);
+      const lbl = `<span class="wklbl" role="rowheader"><b>${esc(label)}</b><i class="cat cat-${cat}">${CATEGORY_CHIP[cat]}</i></span>`;
+      const cells =
+        it.day === "Daily"
+          ? `<span class="wkbar cat-${cat}" role="cell" title="${esc(it.task)}" aria-label="${esc(`Every day: ${it.task}`)}">every day</span>`
+          : WEEK_DAYS.map((d) =>
+              d === it.day
+                ? `<span class="wkc on cat-${cat}" role="cell" title="${esc(it.task)}" aria-label="${esc(`${d}: ${it.task}`)}"></span>`
+                : `<span class="wkc" role="cell" aria-hidden="true"></span>`,
+            ).join("");
+      return `<div class="wkrow" role="row">${lbl}${cells}</div>`;
+    })
+    .join("");
+  return `<div class="wk" role="table" aria-label="Weekly plan">${head}${rows}</div>`;
+}
+
 function planItem(it) {
   const day = String(it.day ?? "").toUpperCase();
   const why = hasText(it.why) ? `<span class="pwhy">${esc(it.why)}</span>` : "";
@@ -176,12 +214,16 @@ export function planSection(vm, num = "08") {
   const title = `<span>Plan for the week of ${weekLabelSpan(p.weekLabel)}</span>`;
   const focus = hasText(p.focus) ? `<p class="pfocus">${esc(p.focus)}</p>` : "";
   const items = arr(p.items);
-  const list = items.length ? `<ul class="plan">${items.map(planItem).join("")}</ul>` : "";
+  const grid = items.length ? weekGrid(items) : "";
+  const list = items.length
+    ? `<details class="pdetails"><summary>Task details</summary><ul class="plan">${items.map(planItem).join("")}</ul></details>`
+    : "";
   return (
     `<section id="m-plan" class="pad"><div class="planbox">` +
     `<h2><span class="num">${esc(num)}</span>${title}</h2>` +
-    `<p class="ssub">Ten to twenty minutes a day, built from this week's real material.</p>` +
+    `<p class="ssub">Ten to twenty minutes a day. Tap a task for the full wording.</p>` +
     focus +
+    grid +
     list +
     askList(arr(p.askTutor).filter(hasText)) +
     `</div></section>`
@@ -243,6 +285,23 @@ export const SECTION_STYLES = `
 .mk .planbox{background:linear-gradient(180deg,var(--teal-wash),transparent 130px);border:1px solid rgba(31,111,104,.28);border-radius:16px;padding:14px 13px 12px;margin:12px 0}
 .mk .planbox h2{margin-bottom:4px}
 .mk .pfocus{margin:6px 0 10px;padding:8px 11px;border-left:3px solid var(--teal);background:var(--surface);border-radius:8px;font-size:.88rem;font-weight:600;color:var(--mink)}
+/* ----- plan: the week grid (label · category chip · 7 day cells; Daily = one bar) ----- */
+.mk .wk{display:grid;grid-template-columns:minmax(0,2.3fr) repeat(7,minmax(0,1fr));gap:7px 4px;align-items:center;margin:10px 0 8px}
+.mk .wkhead,.mk .wkrow{display:contents}
+.mk .wkd{font-size:.58rem;font-weight:800;letter-spacing:.06em;color:var(--mmuted);text-align:center}
+.mk .wklbl{min-width:0;display:flex;flex-direction:column;gap:3px;padding-right:6px}
+.mk .wklbl b{font-size:.8rem;line-height:1.3;color:var(--mink);font-weight:600;overflow-wrap:anywhere}
+.mk .cat{font-style:normal;font-size:.54rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-radius:99px;padding:1px 7px;align-self:flex-start;color:#fff;background:var(--mmuted)}
+.mk .wkc{display:block;height:26px;border-radius:7px;background:var(--surface);border:1px solid var(--mline-soft)}
+.mk .wkc.on{border-color:transparent}
+.mk .wkbar{grid-column:2 / span 7;display:flex;align-items:center;justify-content:center;height:26px;border-radius:7px;color:#fff;font-size:.6rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.mk .cat-grammar{background:var(--acc)} .mk .cat-vocabulary{background:var(--good)} .mk .cat-speaking,.mk .cat-listening{background:var(--teal)} .mk .cat-writing,.mk .cat-reading{background:var(--amb)}
+@media (max-width:599px){.mk .wk{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 3px}.mk .wkhead .wklbl{display:none}.mk .wkrow .wklbl{grid-column:1 / -1;flex-direction:row;align-items:baseline;gap:8px;margin-top:7px;padding-right:0}.mk .wkbar{grid-column:1 / span 7}}
+.mk .pdetails{margin:6px 0 2px}
+.mk .pdetails>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;font-size:.74rem;font-weight:700;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:8px 14px;min-height:44px;box-sizing:border-box}
+.mk .pdetails>summary::-webkit-details-marker{display:none}
+.mk .pdetails>summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.mk .pdetails[open]>summary{opacity:.7}
 .mk ul.plan,.mk ul.ask{list-style:none;margin:0;padding:0}
 .mk ul.plan li{display:flex;gap:10px;align-items:flex-start;background:var(--surface);border:1px solid var(--mline-soft);border-radius:12px;padding:10px 12px;margin:7px 0;min-height:44px;box-sizing:border-box}
 .mk ul.plan li>div{flex:1;min-width:0}

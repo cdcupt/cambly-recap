@@ -114,7 +114,7 @@ const LEVEL = obj({
 
 const PLAN = obj({
   focus: STR,
-  items: { type: "array", items: obj({ day: { type: "string", enum: [...PLAN_DAYS] }, task: STR, why: STR }) },
+  items: { type: "array", items: obj({ day: { type: "string", enum: [...PLAN_DAYS] }, label: STR, task: STR, why: STR }) },
   askTutor: { type: "array", items: STR },
 });
 
@@ -178,6 +178,7 @@ export function acceptanceSchema() {
   relax(s, ["review", "level", "plan"]);
   relax(s.properties.classes.items, ["title"]);
   relax(s.properties.vocabulary.items, ["example"]);
+  relax(s.properties.plan.properties.items.items, ["label"]);
   relax(s.properties.grammarGroups.items.properties.items.items, ["said", "fix", "lessonId"]);
   return s;
 }
@@ -315,8 +316,9 @@ export const RULES = [
   "   sentence summary (why this band; what separates it from the next band), and exactly 3",
   "   advice items (title + detail, at most 40 words) targeted at reaching the next band.",
   "11. Plan: a concrete 7-day plan for the week AFTER this one. focus = one sentence; 5–7 items",
-  "   (day Mon..Sun or \"Daily\"; task at most 25 words, doable in 10–20 minutes, grounded in",
-  "   THIS week's errors, vocabulary and tutor suggestions; why at most 15 words); 2–3 askTutor",
+  "   (day Mon..Sun or \"Daily\"; label = a 2–4 word calendar title such as \"Past-tense diary\";",
+  "   task at most 25 words, doable in 10–20 minutes, grounded in THIS week's errors, vocabulary",
+  "   and tutor suggestions; why at most 15 words); 2–3 askTutor",
   "   requests for the next class (e.g. \"Ask Alex to stop you on every missing article\").",
   "12. Titles: classes[].title = a specific 3–7 word title of what the class was about (e.g.",
   "   \"Lunch breaks & indoor workdays\"), never \"Pro Lesson\" or another generic label.",

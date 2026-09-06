@@ -6,7 +6,7 @@
 // (F7 "fail closed"). These are defense-in-depth re-asserts: the builder's two
 // gates (§3) already ran upstream; the renderer never trusts that they did.
 
-import { BANDS, LEVEL_DIMENSIONS, CONFIDENCE_LEVELS, PLAN_DAYS, LEVEL_ADVICE_MAX, bandIndexOf } from "../coach.js";
+import { BANDS, LEVEL_DIMENSIONS, CONFIDENCE_LEVELS, PLAN_DAYS, PLAN_CATEGORIES, LEVEL_ADVICE_MAX, bandIndexOf } from "../coach.js";
 
 export const SCHEMA_VERSION = 1;
 export const MAX_PAGE_BYTES = 200 * 1024; // §F6 charter cap
@@ -201,6 +201,8 @@ function validatePlan(vm) {
     if (!it || !PLAN_DAYS.includes(it.day)) fail(`${at}.items[${i}].day invalid`);
     if (!isNonEmptyString(it.task)) fail(`${at}.items[${i}].task empty`);
     if (typeof it.why !== "string") fail(`${at}.items[${i}].why must be a string`);
+    if (it.label !== undefined && it.label !== null && !isNonEmptyString(it.label)) fail(`${at}.items[${i}].label must be a non-empty string when present`);
+    if (it.category !== undefined && !PLAN_CATEGORIES.includes(it.category)) fail(`${at}.items[${i}].category invalid`);
   }
   if (!Array.isArray(p.askTutor)) fail(`${at}.askTutor must be an array`);
   for (const [i, a] of p.askTutor.entries()) {

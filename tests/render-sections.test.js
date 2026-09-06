@@ -150,8 +150,8 @@ test("planSection omits the ASK block when askTutor is empty and escapes the wee
 
 // ── styles ────────────────────────────────────────────────────────────────────────
 
-test("SECTION_STYLES is scoped under .mk, stays ≤ 7 KB, wraps every text cell, and stacks the review band below 760px", () => {
-  assert.ok(Buffer.byteLength(SECTION_STYLES, "utf8") <= 7 * 1024, `section CSS ${Buffer.byteLength(SECTION_STYLES, "utf8")} bytes`);
+test("SECTION_STYLES is scoped under .mk, stays ≤ 9 KB, wraps every text cell, and stacks the review band below 760px", () => {
+  assert.ok(Buffer.byteLength(SECTION_STYLES, "utf8") <= 9 * 1024, `section CSS ${Buffer.byteLength(SECTION_STYLES, "utf8")} bytes`);
   const rules = SECTION_STYLES.split("\n").filter((l) => l && !l.startsWith("/*") && !l.startsWith("@media"));
   assert.ok(rules.every((l) => l.startsWith(".mk ")), "every rule is scoped under .mk");
   assert.match(SECTION_STYLES, /\.mk \.lvbig\{[^}]*font-family:var\(--disp\)[^}]*font-size:3\.1rem[^}]*color:var\(--acc\)/, "the band is the display-serif accent big number");
@@ -169,4 +169,23 @@ test("level legibility: the dimension evidence lines and the footnote use --ink-
   const html = levelSection(goldenWeekV2(), "02");
   assert.ok(html.includes('<span class="dev">77 wpm with short pauses; self-repairs quickly.</span>'));
   assert.ok(html.includes('<p class="lvfoot">Estimated from this week'));
+});
+
+test("plan week grid: 7 day columns, one row per task with a derived label + category chip, Daily as one bar, day cells carry the task, wording behind a details toggle", () => {
+  const html = planSection(goldenWeekV2(), "07");
+  const grid = /<div class="wk" role="table" aria-label="Weekly plan">[\s\S]*?<\/div><details/.exec(html);
+  assert.ok(grid, "the grid renders before the details toggle");
+  assert.equal((grid[0].match(/role="columnheader"/g) || []).length, 7);
+  assert.equal((grid[0].match(/<div class="wkrow" role="row">/g) || []).length, 5, "one row per item");
+  assert.equal((grid[0].match(/class="wkc on /g) || []).length, 4, "Mon · Wed · Fri · Sun cells lit");
+  assert.equal((grid[0].match(/class="wkbar /g) || []).length, 1, "the Daily task is one bar");
+  assert.ok(grid[0].includes('<span class="wklbl" role="rowheader"><b>Re-read the two struck sentences above</b><i class="cat cat-speaking">Speak</i></span>'), "derived label + category chip");
+  assert.ok(grid[0].includes('title="Describe your lunch in six sentences, one article per noun. &lt;script&gt;pi()&lt;/script&gt;"'), "the full task rides the cell, escaped");
+  assert.ok(grid[0].includes('aria-label="Mon: Re-read the two struck sentences above and say the fixed versions aloud five times."'));
+  assert.ok(html.includes('<details class="pdetails"><summary>Task details</summary><ul class="plan">'), "the wording list is collapsed by default");
+  assert.ok(!html.includes("<script>pi()"), "no live script");
+  const labelled = goldenWeekV2();
+  labelled.plan.items[0].label = "Say the fixes aloud";
+  labelled.plan.items[0].category = "speaking";
+  assert.ok(planSection(labelled, "07").includes("<b>Say the fixes aloud</b>"), "a stored label wins over the derived one");
 });

@@ -72,7 +72,7 @@ function validWire() {
     },
     plan: {
       focus: "Past tense on every finished action.",
-      items: [{ day: "Mon", task: "Retell your weekend.", why: "Past narration slipped." }, { day: "Daily", task: "One past-tense story.", why: "" }],
+      items: [{ day: "Mon", label: "Weekend retell", task: "Retell your weekend.", why: "Past narration slipped." }, { day: "Daily", label: "Daily story", task: "One past-tense story.", why: "" }],
       askTutor: ["Ask for a stop on every present-for-past slip."],
     },
   };

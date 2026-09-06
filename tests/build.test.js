@@ -1,6 +1,7 @@
 // tests/build.test.js — the two integrity gates + WeekVM assembly + generation loop
 // (TECH §9 U-QG ①–⑩, U-SG ①–⑦, §10 contract, I-SM ②④⑤).
 
+import { deriveLabel, categorize } from "../src/compose.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -1293,7 +1294,7 @@ test("plan composes with the builder-derived next-week label; unknown days / bla
   assert.equal(p.weekLabel, "May 18–24");
   assert.equal(p.focus, "Articles every time.");
   assert.equal(p.items.length, 7);
-  assert.deepEqual(p.items[0], { day: "Mon", task: "task 0", why: "" });
+  assert.deepEqual(p.items[0], { day: "Mon", label: "Task 0", category: "general", task: "task 0", why: "" }, "label derived (capitalised) + category inferred when the wire gives none");
   assert.deepEqual(p.items.map((i) => i.day), ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
   assert.deepEqual(p.askTutor, ["a", "b", "c"]);
   assert.ok(weekVM.build.rejects.some((x) => x.type === "plan" && !x.dropped && /2 plan item/.test(x.reason)));
@@ -1568,4 +1569,35 @@ test("refactor: build.js keeps its public exports — humanizePattern / nextWeek
   assert.equal(typeof compose.composeLevel, "function");
   assert.equal(typeof compose.composePlan, "function");
   assert.equal(typeof compose.tutorFocusOf, "function");
+});
+
+test("plan labels: a short wire label is kept (trailing period dropped), a long one falls back to the derived opening clause", () => {
+  const wire = mkWire({ plan: validPlan({ items: [
+    { day: "Mon", label: "Past-tense diary.", task: "Write 5–6 sentences about your day, then change all verbs to past simple.", why: "" },
+    { day: "Tue", label: "This label is far too long to fit inside a calendar cell", task: "Read one Engoo article aloud, then explain your opinion.", why: "" },
+  ] }) });
+  const { weekVM } = buildWeekVM({ window: WIN, lessons: [reviewLesson()], wire, now: NOW });
+  assert.deepEqual(weekVM.plan.items.map((i) => [i.label, i.category]), [["Past-tense diary", "grammar"], ["Read one Engoo article aloud", "speaking"]]);
+  assert.doesNotThrow(() => validateWeek(weekVM));
+});
+
+test("deriveLabel cuts at the first clause break after three words (function word, punctuation, bracket) and caps at seven words", () => {
+  assert.equal(deriveLabel("Write 5–6 sentences about your day, then change all verbs to clear past simple."), "Write 5–6 sentences");
+  assert.equal(deriveLabel("Summarize one YouTube English video (Vanessa or similar) in 6–8 spoken sentences."), "Summarize one YouTube English video");
+  assert.equal(deriveLabel("Read one Engoo article aloud, then explain your opinion."), "Read one Engoo article aloud");
+  assert.equal(deriveLabel("Take a short tech or business paragraph and rewrite it with simpler sentences."), "Take a short tech or business paragraph");
+  assert.equal(deriveLabel("Listen to a podcast for 10 minutes"), "Listen to a podcast", "a cut word inside the first three words never cuts");
+  assert.equal(deriveLabel("retell your weekend"), "Retell your weekend", "capitalised");
+  assert.equal(deriveLabel(""), "");
+});
+
+test("categorize infers the plan category from the task text; 'article' is grammar only outside a reading context", () => {
+  assert.equal(categorize("Make 3 sentences using a/an, the, and plural nouns."), "grammar");
+  assert.equal(categorize("Practice articles in five sentences about your workday."), "grammar");
+  assert.equal(categorize("Read one Engoo article aloud, then explain your opinion."), "speaking");
+  assert.equal(categorize("Read a news article about drones."), "reading");
+  assert.equal(categorize("Choose 5 common adjectives and replace them with precise synonyms."), "vocabulary");
+  assert.equal(categorize("Take a short paragraph and rewrite it with shorter sentences."), "writing");
+  assert.equal(categorize("Listen to a podcast episode for 10 minutes."), "listening");
+  assert.equal(categorize("Do something nice."), "general");
 });
