@@ -205,8 +205,8 @@ test(
     assert.equal(vm.plan.items.length, 2);
     assert.ok(/^[A-Z][a-z]{2} \d/.test(vm.plan.weekLabel), `plan.weekLabel looks like a week label: ${vm.plan.weekLabel}`);
     const ids = [...html.matchAll(/<section id="(m-[a-z]+)"/g)].map((m) => m[1]);
-    assert.deepEqual(ids, ["m-review", "m-level", "m-classes", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-plan"]);
-    assert.deepEqual([...html.matchAll(/<span class="num">(\d\d)<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "07", "08"]);
+    assert.deepEqual(ids, ["m-level", "m-review", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-plan", "m-classes"]);
+    assert.deepEqual([...html.matchAll(/<span class="num">([0-9]{2}|[A-Z])<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "07", "A"]);
     assert.match(html, /<span class="lvbig">B1\+<\/span>/);
     assert.ok(html.includes(`Plan for the week of <span class="nowrap">${esc(vm.plan.weekLabel)}</span></span></h2>`));
     const pqCards = (html.match(/<button class="pq" aria-expanded="false" aria-controls="pa\d+">/g) || []).length;

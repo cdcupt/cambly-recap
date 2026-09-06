@@ -191,6 +191,9 @@ export function planSection(vm, num = "08") {
 // ── CSS (scoped under .mk; appended after STYLES, before CHART_STYLES) ──────────────
 
 export const SECTION_STYLES = `
+/* ----- appendix (the class log) — a quiet divider + lettered, muted marker ----- */
+.mk section.appendix{margin-top:18px;border-top:1px solid var(--mline);padding-top:26px}
+.mk section.appendix h2 .num{color:var(--mmuted)}
 /* ----- recap v2: review ----- */
 .mk .lead{font-family:var(--disp);font-size:1.02rem;line-height:1.5;color:var(--mink);margin:6px 0 14px}
 .mk .rvgrid{display:grid;gap:10px;margin:0 0 6px}

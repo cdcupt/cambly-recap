@@ -19,12 +19,13 @@ const resolve = {
 
 test("sectionsFor lists only the sections a week carries, in page order, numbered sequentially", () => {
   assert.deepEqual(sectionsFor(goldenWeek()).map((s) => `${s.num}:${s.id}`), [
-    "01:m-classes", "02:m-vocab", "03:m-grammar", "04:m-phrasing", "05:m-practice",
+    "01:m-vocab", "02:m-grammar", "03:m-phrasing", "04:m-practice", "A:m-classes",
   ]);
   assert.deepEqual(sectionsFor(goldenWeekV2()).map((s) => `${s.num}:${s.id}`), [
-    "01:m-review", "02:m-level", "03:m-classes", "04:m-vocab", "05:m-grammar", "06:m-phrasing", "07:m-practice", "08:m-plan",
+    "01:m-level", "02:m-review", "03:m-vocab", "04:m-grammar", "05:m-phrasing", "06:m-practice", "07:m-plan", "A:m-classes",
   ]);
-  assert.deepEqual(sectionsFor(goldenWeekV2({ level: null })).map((s) => s.key), ["review", "classes", "vocab", "grammar", "phrasing", "practice", "plan"]);
+  assert.deepEqual(sectionsFor(goldenWeekV2({ level: null })).map((s) => s.key), ["review", "vocab", "grammar", "phrasing", "practice", "plan", "classes"]);
+  assert.deepEqual(sectionsFor(goldenWeekV2()).map((s) => s.appendix), [false, false, false, false, false, false, false, true]);
   assert.equal(SECTION_DEFS.length, 8);
   assert.equal(sectionNum(0), "01");
   assert.equal(sectionNum(7), "08");
@@ -32,10 +33,10 @@ test("sectionsFor lists only the sections a week carries, in page order, numbere
 
 test("chipNav renders one jump link per present section, in order, and nothing for absent blocks", () => {
   const legacy = chipNav(goldenWeek());
-  assert.equal(legacy, '<nav class="chips" aria-label="Recap sections"><a href="#m-classes">Classes</a><a href="#m-vocab">Vocabulary</a><a href="#m-grammar">Grammar</a><a href="#m-phrasing">Phrasing</a><a href="#m-practice">Practice</a></nav>');
+  assert.equal(legacy, '<nav class="chips" aria-label="Recap sections"><a href="#m-vocab">Vocabulary</a><a href="#m-grammar">Grammar</a><a href="#m-phrasing">Phrasing</a><a href="#m-practice">Practice</a><a href="#m-classes">Class log</a></nav>');
   const v2 = chipNav(goldenWeekV2());
-  assert.ok(v2.startsWith('<nav class="chips" aria-label="Recap sections"><a href="#m-review">Review</a><a href="#m-level">Level</a><a href="#m-classes">'));
-  assert.ok(v2.endsWith('<a href="#m-plan">Plan</a></nav>'));
+  assert.ok(v2.startsWith('<nav class="chips" aria-label="Recap sections"><a href="#m-level">Level</a><a href="#m-review">Review</a><a href="#m-vocab">'));
+  assert.ok(v2.endsWith('<a href="#m-plan">Plan</a><a href="#m-classes">Class log</a></nav>'));
   assert.equal((v2.match(/<a /g) || []).length, 8);
 });
 

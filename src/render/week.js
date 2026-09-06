@@ -1,9 +1,9 @@
 // src/render/week.js — week page assembly (F1 · F4): head boot script, stale
 // banner, header + stat band, sticky chip nav, the content sections, footer nav.
 // The sections a week renders — and their "0N" numbers — derive from what the VM
-// carries: Review · Level · Classes · Vocabulary · Grammar · Phrasing · Practice ·
-// Plan, with the three v2 blocks (review / level / plan) optional. An older VM
-// renders exactly the five legacy sections as 01..05. The reveal mechanic is
+// carries: Level · Review · Vocabulary · Grammar · Phrasing · Practice · Plan, then
+// the class log as appendix "A"; the three v2 blocks (level / review / plan) are
+// optional. An older VM renders the four legacy body sections as 01..04 + appendix A. The reveal mechanic is
 // shipped only when the week actually has practice cards.
 
 import { esc } from "./esc.js";

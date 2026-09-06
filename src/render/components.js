@@ -35,23 +35,30 @@ const LARR = "←"; // ←
 const isBlock = (v) => v !== null && v !== undefined && typeof v === "object";
 
 /**
- * The eight possible recap sections in page order. `present(vm)` decides whether a
+ * The eight possible recap sections in page order: the level estimate leads, the plan
+ * closes the main body, and the class log follows as an APPENDIX (lettered "A", not
+ * numbered — reference material, not the Monday read). `present(vm)` decides whether a
  * week carries the section; the five legacy sections are always present.
  */
 export const SECTION_DEFS = Object.freeze([
-  { key: "review", id: "m-review", chip: "Review", present: (vm) => isBlock(vm && vm.review) },
   { key: "level", id: "m-level", chip: "Level", present: (vm) => isBlock(vm && vm.level) },
-  { key: "classes", id: "m-classes", chip: "Classes", present: () => true },
+  { key: "review", id: "m-review", chip: "Review", present: (vm) => isBlock(vm && vm.review) },
   { key: "vocab", id: "m-vocab", chip: "Vocabulary", present: () => true },
   { key: "grammar", id: "m-grammar", chip: "Grammar", present: () => true },
   { key: "phrasing", id: "m-phrasing", chip: "Phrasing", present: () => true },
   { key: "practice", id: "m-practice", chip: "Practice", present: () => true },
   { key: "plan", id: "m-plan", chip: "Plan", present: (vm) => isBlock(vm && vm.plan) },
+  { key: "classes", id: "m-classes", chip: "Class log", present: () => true, appendix: true },
 ]);
 
 /** Zero-padded two-digit section number ("01".."08"). */
 export function sectionNum(i) {
   return String(i + 1).padStart(2, "0");
+}
+
+/** Appendix letter ("A", "B", …) — appendices are lettered, never numbered. */
+export function appendixLetter(i) {
+  return String.fromCharCode(65 + i);
 }
 
 /**
@@ -67,15 +74,19 @@ export function weekLabelSpan(label) {
 /**
  * The sections a week renders, in page order, each with its sequential number.
  * @param {object} vm
- * @returns {{key:string,id:string,chip:string,num:string}[]}
+ * Main sections are numbered "01".."0N"; appendices (the class log) are lettered "A"… and
+ * always follow the main body.
+ * @returns {{key:string,id:string,chip:string,num:string,appendix:boolean}[]}
  */
 export function sectionsFor(vm) {
-  return SECTION_DEFS.filter((s) => s.present(vm)).map((s, i) => ({
-    key: s.key,
-    id: s.id,
-    chip: s.chip,
-    num: sectionNum(i),
-  }));
+  const present = SECTION_DEFS.filter((s) => s.present(vm));
+  const main = present.filter((s) => !s.appendix);
+  const appendices = present.filter((s) => s.appendix);
+  const pick = (s) => ({ key: s.key, id: s.id, chip: s.chip, appendix: s.appendix === true });
+  return [
+    ...main.map((s, i) => ({ ...pick(s), num: sectionNum(i) })),
+    ...appendices.map((s, i) => ({ ...pick(s), num: appendixLetter(i) })),
+  ];
 }
 
 /**
@@ -224,17 +235,17 @@ export function classCard(cls) {
   );
 }
 
-/** The classes section. A non-empty week always has ≥1 class. */
-export function classesSection(classes, num = "01") {
+/** The class log — an APPENDIX at the end of the page (lettered). A non-empty week always has ≥1 class. */
+export function classesSection(classes, num = "A") {
   const list = Array.isArray(classes) ? classes : [];
-  const title = "The class log";
+  const title = `Appendix ${MDOT} The class log`;
   const ssub = list.length
-    ? "What each conversation was about — and the moment worth keeping."
+    ? "Every class of the week — what each conversation was about, the moment worth keeping, and the tutor's feedback."
     : "";
   const body = list.length
     ? list.map(classCard).join("")
     : emptyNote("No classes this week.");
-  return `<section id="m-classes" class="pad">${sectionHead(num, title, ssub)}${body}</section>`;
+  return `<section id="m-classes" class="pad appendix">${sectionHead(num, title, ssub)}${body}</section>`;
 }
 
 /**

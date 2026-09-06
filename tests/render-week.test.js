@@ -14,10 +14,11 @@ import {
   healthySiteState,
 } from "./render-fixtures.js";
 
-const LEGACY_IDS = ["m-classes", "m-vocab", "m-grammar", "m-phrasing", "m-practice"];
-const V2_IDS = ["m-review", "m-level", ...LEGACY_IDS, "m-plan"];
+const LEGACY_BODY = ["m-vocab", "m-grammar", "m-phrasing", "m-practice"];
+const LEGACY_IDS = [...LEGACY_BODY, "m-classes"]; // the class log closes the page as appendix "A"
+const V2_IDS = ["m-level", "m-review", ...LEGACY_BODY, "m-plan", "m-classes"];
 const sectionIds = (html) => [...html.matchAll(/<section id="(m-[a-z]+)"/g)].map((m) => m[1]);
-const sectionNums = (html) => [...html.matchAll(/<span class="num">(\d\d)<\/span>/g)].map((m) => m[1]);
+const sectionNums = (html) => [...html.matchAll(/<span class="num">([0-9]{2}|[A-Z])<\/span>/g)].map((m) => m[1]);
 const chipHrefs = (html) => {
   const nav = /<nav class="chips"[^>]*>(.*?)<\/nav>/.exec(html)[1];
   return [...nav.matchAll(/href="#(m-[a-z]+)"/g)].map((m) => m[1]);
@@ -100,7 +101,7 @@ test("U-RN-① zero-item section keeps its h2 + chip, body collapses to one mute
   const html = renderWeek(vm);
   assert.ok(html.includes('id="m-vocab"'), "vocab section kept");
   assert.ok(html.includes('href="#m-vocab"'), "vocab chip kept");
-  assert.match(html, /<span class="num">02<\/span>Vocabulary of the week<\/h2><p class="empty-note">No new vocabulary this week\.<\/p>/);
+  assert.match(html, /<span class="num">01<\/span>Vocabulary of the week<\/h2><p class="empty-note">No new vocabulary this week\.<\/p>/);
 });
 
 test("U-RN-⑧ XSS: a <script> in transcript content renders escaped, never live", () => {
@@ -252,37 +253,38 @@ test("renderWeek recent shape: tutorFocus content is escaped (nextFocus XSS prob
 
 // ── recap v2: dynamic sections, tutors, titles, work-on, derived rows, examples ─────
 
-test("v2: an older VM (no review/level/plan) renders EXACTLY the five legacy sections, numbered 01..05, five chips in order", () => {
+test("v2: an older VM (no review/level/plan) renders EXACTLY the five legacy sections — four numbered 01..04 + the class log as appendix A — five chips in order", () => {
   const html = renderWeek(goldenWeek());
   assert.deepEqual(sectionIds(html), LEGACY_IDS);
-  assert.deepEqual(sectionNums(html), ["01", "02", "03", "04", "05"]);
+  assert.deepEqual(sectionNums(html), ["01", "02", "03", "04", "A"]);
   assert.deepEqual(chipHrefs(html), LEGACY_IDS);
   for (const id of ["m-review", "m-level", "m-plan"]) assert.ok(!html.includes(`id="${id}"`), `${id} absent`);
   assert.ok(!html.includes("Level estimate") && !html.includes("The week in review") && !html.includes("Plan for the week"));
 });
 
-test("v2: a VM carrying every block renders all eight sections in order Review · Level · Classes · Vocabulary · Grammar · Phrasing · Practice · Plan, numbered 01..08", () => {
+test("v2: a VM carrying every block renders all eight sections in order Level · Review · Vocabulary · Grammar · Phrasing · Practice · Plan, then the class log as appendix A", () => {
   const html = renderWeek(goldenWeekV2());
   assert.deepEqual(sectionIds(html), V2_IDS);
-  assert.deepEqual(sectionNums(html), ["01", "02", "03", "04", "05", "06", "07", "08"]);
+  assert.deepEqual(sectionNums(html), ["01", "02", "03", "04", "05", "06", "07", "A"]);
   assert.deepEqual(chipHrefs(html), V2_IDS);
   assert.equal((html.match(/<h1>/g) || []).length, 1, "still exactly one h1");
-  assert.match(html, /<span class="num">01<\/span>The week in review<\/h2>/);
-  assert.match(html, /<span class="num">02<\/span>Level estimate<\/h2>/);
-  assert.match(html, /<span class="num">03<\/span>The class log<\/h2>/);
-  assert.match(html, /<span class="num">07<\/span>Practice — tap to reveal<\/h2>/);
-  assert.match(html, /<span class="num">08<\/span><span>Plan for the week of <span class="nowrap">Jun 1–7<\/span><\/span><\/h2>/);
+  assert.match(html, /<span class="num">01<\/span>Level estimate<\/h2>/, "the level estimate leads the page");
+  assert.match(html, /<span class="num">02<\/span>The week in review<\/h2>/);
+  assert.match(html, /<span class="num">06<\/span>Practice — tap to reveal<\/h2>/);
+  assert.match(html, /<span class="num">07<\/span><span>Plan for the week of <span class="nowrap">Jun 1–7<\/span><\/span><\/h2>/);
+  assert.match(html, /<section id="m-classes" class="pad appendix"><h2><span class="num">A<\/span>Appendix · The class log<\/h2>/, "the class log is the lettered appendix");
+  assert.ok(html.lastIndexOf('<section id="m-classes"') > html.lastIndexOf('<section id="m-plan"'), "the appendix comes after the plan");
 });
 
 test("v2: numbering stays sequential when only SOME optional blocks are present (chips follow)", () => {
   const levelOnly = renderWeek(goldenWeekV2({ review: undefined, plan: undefined }));
-  assert.deepEqual(sectionIds(levelOnly), ["m-level", ...LEGACY_IDS]);
-  assert.deepEqual(sectionNums(levelOnly), ["01", "02", "03", "04", "05", "06"]);
-  assert.deepEqual(chipHrefs(levelOnly), ["m-level", ...LEGACY_IDS]);
+  assert.deepEqual(sectionIds(levelOnly), ["m-level", ...LEGACY_BODY, "m-classes"]);
+  assert.deepEqual(sectionNums(levelOnly), ["01", "02", "03", "04", "05", "A"]);
+  assert.deepEqual(chipHrefs(levelOnly), ["m-level", ...LEGACY_BODY, "m-classes"]);
   const planOnly = renderWeek(goldenWeekV2({ review: null, level: null }));
-  assert.deepEqual(sectionIds(planOnly), [...LEGACY_IDS, "m-plan"]);
-  assert.deepEqual(sectionNums(planOnly), ["01", "02", "03", "04", "05", "06"]);
-  assert.match(planOnly, /<span class="num">06<\/span><span>Plan for the week of/);
+  assert.deepEqual(sectionIds(planOnly), [...LEGACY_BODY, "m-plan", "m-classes"]);
+  assert.deepEqual(sectionNums(planOnly), ["01", "02", "03", "04", "05", "A"]);
+  assert.match(planOnly, /<span class="num">05<\/span><span>Plan for the week of/);
 });
 
 test("v2: the header names the tutor; each class card reads an eyebrow (min · with <tutor>) and the title-or-topic as its headline", () => {
@@ -472,7 +474,7 @@ test("cross-month week labels never break at the spaced en dash: h1, Plan title 
     next: { weekId: "2026-07-06", weekLabel: "Jul 6–12" },
   });
   assert.ok(html.includes('<h1>Week of <span class="accent"><span class="nowrap">Jun 29 – Jul 5</span></span></h1>'), "h1");
-  assert.ok(html.includes('<h2><span class="num">08</span><span>Plan for the week of <span class="nowrap">Jul 27 – Aug 2</span></span></h2>'), "plan title: one title span (the h2 is a flex row) around the nowrap label");
+  assert.ok(html.includes('<h2><span class="num">07</span><span>Plan for the week of <span class="nowrap">Jul 27 – Aug 2</span></span></h2>'), "plan title: one title span (the h2 is a flex row) around the nowrap label");
   assert.ok(html.includes('<a href="2026-06-22.html"><span>← Week of <span class="nowrap">Jun 22–28</span></span></a>'), "footer prev");
   assert.ok(html.includes('<a href="2026-07-06.html"><span>Week of <span class="nowrap">Jul 6–12</span> →</span></a>'), "footer next");
   assert.match(STYLES, /\.mk \.nowrap\{white-space:nowrap;overflow-wrap:normal;word-break:normal\}/, "the rule also cancels the defensive overflow-wrap:anywhere inherited from its container");
