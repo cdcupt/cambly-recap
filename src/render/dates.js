@@ -68,6 +68,14 @@ export function publishedLabel(iso) {
   return `${p.weekday} ${p.month} ${p.day}, ${pad2(p.hours)}:${pad2(p.minutes)}`;
 }
 
+/** Clock time of a CST timestamp, "18:00". */
+export function timeLabel(iso) {
+  const ms = toEpoch(iso);
+  if (ms === null) return "";
+  const p = cstParts(ms);
+  return `${pad2(p.hours)}:${pad2(p.minutes)}`;
+}
+
 /** Stale-banner expiry stamp, "Mon Jul 6" (handles both datetime and date-only). */
 export function expiryLabel(iso) {
   const ms = toEpoch(iso);

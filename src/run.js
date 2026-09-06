@@ -9,12 +9,10 @@
 //   auth-expired(3)  — the §3 predicate fired; amber banner re-render + 🔑 email
 //   fetch-failed(2)  — listing/summarize/build/render failed after retries; ⚠️ email
 //
-// Cross-cutting behaviour: missed-week self-heal (build every complete week ≥
-// FIRST_WEEK lacking a VM file), --backfill (summarize ALL historical weeks — PM
-// approved full depth), site-state.json written after every run, healthz.json
-// written LAST (after the mail attempt so emailOk is final), atomic site swap
-// (delegated to the renderer), and idempotent re-runs — an already-built target
-// makes zero LLM calls and sends zero emails.
+// Cross-cutting: missed-week self-heal (every complete week ≥ FIRST_WEEK lacking a VM),
+// --backfill (summarize ALL history), site-state.json after every run, healthz.json LAST
+// (after the mail attempt so emailOk is final), atomic site swap (renderer), idempotent
+// re-runs (an already-built target makes zero LLM calls and sends zero emails).
 //
 // Tutors (v2): /api/tutors answers an OBJECT map keyed by id → normalized to the flat map
 // {id: {id, displayName}}, merged into data/tutors.json (never shrinks), used to name each
@@ -24,9 +22,8 @@
 // dirs (LLM yes, Cambly no, mail only with --mail); --render re-renders with zero LLM and
 // zero network. Neither rewrites site-state.json.
 //
-// Env seams (all honoured here): CAMBLY_BASE_URL, OPENAI_BASE_URL, RESEND_BASE_URL,
-// DATA_DIR, SITE_DIR, FAKE_NOW, OPENAI_MODEL, FIRST_WEEK, CAMBLY_STATE_PATH,
-// MAIL_FROM/MAIL_TO/SITE_URL. Week math is Asia/Shanghai (src/week.js).
+// Env seams: CAMBLY_BASE_URL, OPENAI_BASE_URL, RESEND_BASE_URL, DATA_DIR, SITE_DIR, FAKE_NOW,
+// OPENAI_MODEL, FIRST_WEEK, CAMBLY_STATE_PATH, MAIL_FROM/MAIL_TO/SITE_URL. Week math = Asia/Shanghai.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -71,6 +68,7 @@ import {
 } from "./tutors.js";
 import { generateWeekVM } from "./build.js";
 import { openaiBase, openaiKey, openaiModel, summarizeWeek } from "./summarize.js";
+import { refreshNextWeek } from "./schedule.js";
 import { buildSite, readWeeks, readSiteState, computeFacts } from "./render/site.js";
 import { writeHealthz } from "./render/healthz.js";
 import { OUTCOME, RECOVERY_COMMANDS, sendEmail, siteUrl } from "./mail.js";
@@ -382,6 +380,8 @@ export async function runGenerate(opts = {}) {
 
     // Tutor self-heal: name every published class whose tutor was lost (spec A2).
     tutorsPatched = patchTutorNames({ dataDir, fsImpl, tutorsMap, log });
+    // Next-week schedule + weekly quota on the target week (online only; never fails the run).
+    await refreshNextWeek({ dataDir, fsImpl, weekId: target, base, uid, headers, tutorsMap, now: nowMs, log, netOpts });
 
     const targetVM = readWeekVM(dataDir, target, fsImpl);
     const targetEmpty = !targetVM || targetVM.isEmpty === true;

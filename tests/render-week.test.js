@@ -277,7 +277,7 @@ test("v2: a VM carrying every block renders all eight sections in order Level ·
 });
 
 test("v2: numbering stays sequential when only SOME optional blocks are present (chips follow)", () => {
-  const levelOnly = renderWeek(goldenWeekV2({ review: undefined, plan: undefined }));
+  const levelOnly = renderWeek(goldenWeekV2({ review: undefined, plan: undefined, nextWeek: undefined }));
   assert.deepEqual(sectionIds(levelOnly), ["m-level", ...LEGACY_BODY, "m-classes"]);
   assert.deepEqual(sectionNums(levelOnly), ["01", "02", "03", "04", "05", "A"]);
   assert.deepEqual(chipHrefs(levelOnly), ["m-level", ...LEGACY_BODY, "m-classes"]);
@@ -391,7 +391,7 @@ test("v2: a vocab card with no clean quote shows the model sentence as an 'e.g.'
 
 test("v2 XSS: every new field (title, workOn, example, derived said, review, level, plan) renders escaped — zero live script tags", () => {
   const html = renderWeek(goldenWeekV2());
-  const probes = ["t()", "w()", "e()", "g()", "r()", "ww()", "nw()", "d()", "ls()", "a()", "p()", "pi()", "at()"];
+  const probes = ["t()", "w()", "e()", "g()", "r()", "ww()", "nw()", "d()", "ls()", "a()", "n()"]; // plan prose is no longer rendered; n() = nextWeek tutor
   for (const p of probes) {
     assert.ok(html.includes(`&lt;script&gt;${p}&lt;/script&gt;`), `probe ${p} escaped`);
     assert.ok(!html.includes(`<script>${p}</script>`), `probe ${p} never live`);
@@ -468,7 +468,7 @@ test("header tutor line: all named → 'with A, B'; some unnamed → 'with Alex 
 
 test("cross-month week labels never break at the spaced en dash: h1, Plan title and footer nav wrap the label in .nowrap; the CSS rule exists", () => {
   const vm = goldenWeekV2({ weekLabel: "Jun 29 – Jul 5" });
-  vm.plan.weekLabel = "Jul 27 – Aug 2";
+  vm.nextWeek.weekLabel = "Jul 27 – Aug 2";
   const html = renderWeek(vm, {
     prev: { weekId: "2026-06-22", weekLabel: "Jun 22–28" },
     next: { weekId: "2026-07-06", weekLabel: "Jul 6–12" },

@@ -11,7 +11,7 @@
 import { esc } from "./esc.js";
 import { dayChipUpper } from "./dates.js";
 import { sectionHead, weekLabelSpan } from "./components.js";
-import { PLAN_CATEGORIES, deriveLabel, categorize } from "../coach.js";
+import { dateLabel, timeLabel, weekdayShort } from "./dates.js";
 import { BANDS } from "../coach.js";
 
 const MDOT = "·";
@@ -148,84 +148,84 @@ export function levelSection(vm, num = "02") {
   );
 }
 
-// ── Plan ─────────────────────────────────────────────────────────────────────────
+// ── Plan = next week's schedule + quota (WeekVM.nextWeek; builder-owned, no LLM text) ────
 
 const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const CATEGORY_CHIP = { grammar: "Grammar", vocabulary: "Vocab", speaking: "Speak", writing: "Write", reading: "Read", listening: "Listen", general: "Practice" };
 
-// VMs built before labels/categories existed (and any wire that omitted them) fall back to the same
-// deterministic helpers the builder uses, so the grid never shows a full sentence as a label.
-const categoryOf = (it) => (PLAN_CATEGORIES.includes(it.category) ? it.category : categorize(it.task));
-const labelOf = (it) => (hasText(it.label) ? it.label : deriveLabel(it.task));
+const lessonDay = (l) => weekdayShort(l.startAt);
 
-/**
- * The week grid — the plan as a picture: one row per task (short label + category chip),
- * seven day columns; a "Daily" task is one bar across the week. Cells carry the full task
- * as title/aria-label; the wording itself lives in the details list below the grid.
- */
-function weekGrid(items) {
+function lessonTitle(l) {
+  const parts = [dateLabel(l.startAt), timeLabel(l.startAt)];
+  if (Number.isInteger(l.minutes)) parts.push(`${l.minutes} min`);
+  if (hasText(l.tutor)) parts.push(`with ${l.tutor}`);
+  parts.push(l.state === "done" ? "done" : l.state === "confirmed" ? "booked" : l.state);
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** One row of seven day cells; a cell lists its lessons' start times, filled by state. */
+function scheduleGrid(lessons) {
   const head =
     `<div class="wkhead" role="row"><span class="wklbl" aria-hidden="true"></span>` +
     WEEK_DAYS.map((d) => `<span class="wkd" role="columnheader">${d.toUpperCase()}</span>`).join("") +
     `</div>`;
-  const rows = items
-    .map((it) => {
-      const cat = categoryOf(it);
-      const label = labelOf(it);
-      const lbl = `<span class="wklbl" role="rowheader"><b>${esc(label)}</b><i class="cat cat-${cat}">${CATEGORY_CHIP[cat]}</i></span>`;
-      const cells =
-        it.day === "Daily"
-          ? `<span class="wkbar cat-${cat}" role="cell" title="${esc(it.task)}" aria-label="${esc(`Every day: ${it.task}`)}">every day</span>`
-          : WEEK_DAYS.map((d) =>
-              d === it.day
-                ? `<span class="wkc on cat-${cat}" role="cell" title="${esc(it.task)}" aria-label="${esc(`${d}: ${it.task}`)}"></span>`
-                : `<span class="wkc" role="cell" aria-hidden="true"></span>`,
-            ).join("");
-      return `<div class="wkrow" role="row">${lbl}${cells}</div>`;
-    })
+  const cells = WEEK_DAYS.map((d) => {
+    const here = lessons.filter((l) => lessonDay(l) === d);
+    if (!here.length) return `<span class="wkc" role="cell" aria-hidden="true"></span>`;
+    const state = here.every((l) => l.state === "done") ? "done" : "booked";
+    const times = here.map((l) => `<b>${esc(timeLabel(l.startAt))}</b>`).join("");
+    const title = here.map(lessonTitle).join(" / ");
+    return `<span class="wkc on ${state}" role="cell" title="${esc(title)}" aria-label="${esc(title)}">${times}</span>`;
+  }).join("");
+  const row = `<div class="wkrow" role="row"><span class="wklbl" role="rowheader"><b>Classes</b></span>${cells}</div>`;
+  return `<div class="wk sched" role="table" aria-label="Next week's classes">${head}${row}</div>`;
+}
+
+/** The weekly plan as a segmented meter: done · booked · open, one segment per class in the plan. */
+function quotaMeter(lessons, quota) {
+  const q = quota || {};
+  const done = lessons.filter((l) => l.state === "done").length;
+  const booked = lessons.filter((l) => l.state === "confirmed").length;
+  const perWeek = Number.isInteger(q.lessonsPerWeek) ? q.lessonsPerWeek : null;
+  const total = perWeek === null ? done + booked : Math.max(perWeek, done + booked);
+  const open = perWeek === null ? null : Math.max(0, perWeek - done - booked);
+  const segs = Array.from({ length: total }, (_, i) => (i < done ? "done" : i < done + booked ? "booked" : "open"))
+    .map((k) => `<i class="qs ${k}"></i>`)
     .join("");
-  return `<div class="wk" role="table" aria-label="Weekly plan">${head}${rows}</div>`;
-}
-
-function planItem(it) {
-  const day = String(it.day ?? "").toUpperCase();
-  const why = hasText(it.why) ? `<span class="pwhy">${esc(it.why)}</span>` : "";
-  return `<li><i class="daychip">${esc(day)}</i><div><span class="task">${esc(it.task)}</span>${why}</div></li>`;
-}
-
-function askList(asks) {
-  if (!asks.length) return "";
-  const rows = asks.map((a) => `<li><i class="daychip askc">ASK</i><span>${esc(a)}</span></li>`).join("");
-  return `<h3 class="askh">Ask your tutor next class</h3><ul class="ask">${rows}</ul>`;
+  const key = (k) => `<i class="qk ${k}"></i>`;
+  const bits = [`${key("done")}<b>${done}</b> done`, `${key("booked")}<b>${booked}</b> booked`];
+  if (open !== null) bits.push(`${key("open")}<b>${open}</b> open`);
+  const of = perWeek === null ? "" : ` of ${perWeek} classes`;
+  const each = Number.isInteger(q.minutesPerLesson) ? ` · ${q.minutesPerLesson} min each` : "";
+  const tier = hasText(q.tier) ? ` · ${esc(q.tier)}` : "";
+  const tutors = [...new Set(lessons.map((l) => l.tutor).filter(hasText))];
+  const withT = tutors.length ? ` · with ${esc(tutors.join(", "))}` : "";
+  const label = `${done} done, ${booked} booked${open === null ? "" : `, ${open} open`}${of}`;
+  return (
+    `<div class="quota">` +
+    (total ? `<div class="qbar" role="img" aria-label="${esc(label)}">${segs}</div>` : "") +
+    `<p class="qcap">${bits.join(" · ")}${esc(of)}${each}${tier}${withT}</p>` +
+    `</div>`
+  );
 }
 
 /**
- * Section — "Plan for the week of <weekLabel>" (vm.plan): the focus line, the day-chipped
- * checklist and the "Ask your tutor" rows, framed in one teal-wash card (the mirror of
- * the practice frame). Returns "" when vm.plan is absent.
- * @param {object} vm
+ * Section — "Plan for the week of <weekLabel>" (vm.nextWeek): the coming week's booked
+ * classes on a Mon–Sun grid and the weekly-plan meter. Returns "" when vm.nextWeek is absent.
  * @param {string} [num] the section's "0N" number
  */
-export function planSection(vm, num = "08") {
-  const p = vm && vm.plan;
-  if (!p || typeof p !== "object") return "";
+export function planSection(vm, num = "07") {
+  const n = vm && vm.nextWeek;
+  if (!n || typeof n !== "object") return "";
+  const lessons = arr(n.lessons).filter((l) => l && hasText(l.startAt));
   // The h2 is a flex row (number · title): the title is ONE span so its flowing text and
   // the non-breaking week label wrap together instead of becoming two flex items.
-  const title = `<span>Plan for the week of ${weekLabelSpan(p.weekLabel)}</span>`;
-  const focus = hasText(p.focus) ? `<p class="pfocus">${esc(p.focus)}</p>` : "";
-  const items = arr(p.items);
-  const grid = items.length ? weekGrid(items) : "";
-  const list = items.length
-    ? `<details class="pdetails"><summary>Task details</summary><ul class="plan">${items.map(planItem).join("")}</ul></details>`
-    : "";
+  const title = `<span>Plan for the week of ${weekLabelSpan(n.weekLabel)}</span>`;
   return (
     `<section id="m-plan" class="pad"><div class="planbox">` +
     `<h2><span class="num">${esc(num)}</span>${title}</h2>` +
-    `<p class="ssub">Ten to twenty minutes a day. Tap a task for the full wording.</p>` +
-    focus +
-    grid +
-    list +
-    askList(arr(p.askTutor).filter(hasText)) +
+    `<p class="ssub">Your booked classes, and what is left of the weekly plan.</p>` +
+    scheduleGrid(lessons) +
+    quotaMeter(lessons, n.quota) +
     `</div></section>`
   );
 }
@@ -284,36 +284,29 @@ export const SECTION_STYLES = `
 /* ----- recap v2: plan (teal mirror of the practice frame) ----- */
 .mk .planbox{background:linear-gradient(180deg,var(--teal-wash),transparent 130px);border:1px solid rgba(31,111,104,.28);border-radius:16px;padding:14px 13px 12px;margin:12px 0}
 .mk .planbox h2{margin-bottom:4px}
-.mk .pfocus{margin:6px 0 10px;padding:8px 11px;border-left:3px solid var(--teal);background:var(--surface);border-radius:8px;font-size:.88rem;font-weight:600;color:var(--mink)}
-/* ----- plan: the week grid (label · category chip · 7 day cells; Daily = one bar) ----- */
-.mk .wk{display:grid;grid-template-columns:minmax(0,2.3fr) repeat(7,minmax(0,1fr));gap:7px 4px;align-items:center;margin:10px 0 8px}
+/* ----- plan: next week's classes (Mon–Sun grid) + the weekly-plan meter ----- */
+.mk .wk{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(7,minmax(0,1fr));gap:7px 4px;align-items:center;margin:10px 0 8px}
 .mk .wkhead,.mk .wkrow{display:contents}
 .mk .wkd{font-size:.58rem;font-weight:800;letter-spacing:.06em;color:var(--mmuted);text-align:center}
-.mk .wklbl{min-width:0;display:flex;flex-direction:column;gap:3px;padding-right:6px}
-.mk .wklbl b{font-size:.8rem;line-height:1.3;color:var(--mink);font-weight:600;overflow-wrap:anywhere}
-.mk .cat{font-style:normal;font-size:.54rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-radius:99px;padding:1px 7px;align-self:flex-start;color:#fff;background:var(--mmuted)}
-.mk .wkc{display:block;height:26px;border-radius:7px;background:var(--surface);border:1px solid var(--mline-soft)}
+.mk .wklbl{min-width:0;padding-right:6px;font-size:.78rem;color:var(--ink-soft)}
+.mk .wkc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:38px;border-radius:8px;background:var(--surface);border:1px solid var(--mline-soft);font-size:.66rem;font-weight:800;color:#fff;letter-spacing:.02em}
 .mk .wkc.on{border-color:transparent}
-.mk .wkbar{grid-column:2 / span 7;display:flex;align-items:center;justify-content:center;height:26px;border-radius:7px;color:#fff;font-size:.6rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
-.mk .cat-grammar{background:var(--acc)} .mk .cat-vocabulary{background:var(--good)} .mk .cat-speaking,.mk .cat-listening{background:var(--teal)} .mk .cat-writing,.mk .cat-reading{background:var(--amb)}
-@media (max-width:599px){.mk .wk{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 3px}.mk .wkhead .wklbl{display:none}.mk .wkrow .wklbl{grid-column:1 / -1;flex-direction:row;align-items:baseline;gap:8px;margin-top:7px;padding-right:0}.mk .wkbar{grid-column:1 / span 7}}
-.mk .pdetails{margin:6px 0 2px}
-.mk .pdetails>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;font-size:.74rem;font-weight:700;color:var(--teal);background:var(--teal-wash);border-radius:99px;padding:8px 14px;min-height:44px;box-sizing:border-box}
-.mk .pdetails>summary::-webkit-details-marker{display:none}
-.mk .pdetails>summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
-.mk .pdetails[open]>summary{opacity:.7}
-.mk ul.plan,.mk ul.ask{list-style:none;margin:0;padding:0}
-.mk ul.plan li{display:flex;gap:10px;align-items:flex-start;background:var(--surface);border:1px solid var(--mline-soft);border-radius:12px;padding:10px 12px;margin:7px 0;min-height:44px;box-sizing:border-box}
-.mk ul.plan li>div{flex:1;min-width:0}
-.mk ul.plan .daychip,.mk ul.ask .daychip{flex:0 0 auto;min-width:40px;text-align:center;margin-top:2px}
-.mk .task{display:block;font-size:.88rem;color:var(--mink)}
-.mk .pwhy{display:block;font-size:.76rem;color:var(--mmuted);margin-top:2px}
-.mk .askh{font-size:.66rem;letter-spacing:.09em;text-transform:uppercase;font-weight:800;color:var(--teal);margin:14px 0 4px}
-.mk ul.ask li{display:flex;gap:10px;align-items:flex-start;padding:8px 2px;font-size:.86rem;border-top:1px solid var(--mline-soft);min-height:44px;box-sizing:border-box}
-.mk ul.ask li>span{flex:1;min-width:0}
-.mk .daychip.askc{color:#fff;background:var(--teal)}
+.mk .wkc.on.done{background:var(--teal)}
+.mk .wkc.on.booked{background:var(--acc)}
+.mk .wkc b{font-weight:800;line-height:1.2}
+.mk .quota{margin:8px 0 2px}
+.mk .qbar{display:flex;gap:3px;height:10px;margin:2px 0 7px}
+.mk .qs{flex:1;border-radius:99px;background:var(--surface);border:1px solid var(--mline)}
+.mk .qs.done{background:var(--teal);border-color:var(--teal)}
+.mk .qs.booked{background:var(--acc);border-color:var(--acc)}
+.mk .qcap{margin:0;font-size:.8rem;color:var(--ink-soft)}
+.mk .qk{display:inline-block;width:8px;height:8px;border-radius:99px;margin-right:4px;vertical-align:middle;background:var(--surface);border:1px solid var(--mline)}
+.mk .qk.done{background:var(--teal);border-color:var(--teal)}
+.mk .qk.booked{background:var(--acc);border-color:var(--acc)}
+.mk .qcap b{color:var(--mink)}
+@media (max-width:599px){.mk .wk{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 3px}.mk .wkhead .wklbl{display:none}.mk .wkrow .wklbl{grid-column:1 / -1;margin-top:4px;padding-right:0}}
 /* ----- recap v2: wrapping + responsive ----- */
-.mk .lead,.mk .rvcard .pt,.mk .rvcard .rq,.mk .rvcard .iss,.mk .rvcard .fx,.mk .lvsum,.mk .dev,.mk .advice b,.mk .advice span,.mk .pfocus,.mk .task,.mk .pwhy,.mk ul.ask li>span,.mk .planbox h2{overflow-wrap:anywhere;word-break:break-word}
+.mk .lead,.mk .rvcard .pt,.mk .rvcard .rq,.mk .rvcard .iss,.mk .rvcard .fx,.mk .lvsum,.mk .dev,.mk .advice b,.mk .advice span,.mk .qcap,.mk .wklbl,.mk .planbox h2{overflow-wrap:anywhere;word-break:break-word}
 .mk .planbox h2{min-width:0}
 .mk .planbox h2 .num{flex:0 0 auto;white-space:nowrap;overflow-wrap:normal;word-break:normal}
 @media (min-width:480px){.mk .lvhero{grid-template-columns:auto 1fr}}

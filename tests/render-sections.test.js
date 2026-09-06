@@ -36,7 +36,7 @@ test("chipNav renders one jump link per present section, in order, and nothing f
   assert.equal(legacy, '<nav class="chips" aria-label="Recap sections"><a href="#m-vocab">Vocabulary</a><a href="#m-grammar">Grammar</a><a href="#m-phrasing">Phrasing</a><a href="#m-practice">Practice</a><a href="#m-classes">Class log</a></nav>');
   const v2 = chipNav(goldenWeekV2());
   assert.ok(v2.startsWith('<nav class="chips" aria-label="Recap sections"><a href="#m-level">Level</a><a href="#m-review">Review</a><a href="#m-vocab">'));
-  assert.ok(v2.endsWith('<a href="#m-plan">Plan</a><a href="#m-classes">Class log</a></nav>'));
+  assert.ok(v2.endsWith('<a href="#m-plan">Next week</a><a href="#m-classes">Class log</a></nav>'));
   assert.equal((v2.match(/<a /g) || []).length, 8);
 });
 
@@ -120,35 +120,46 @@ test("levelSection: A2 fills exactly one cell, C1 fills all seven; zero advice o
   assert.ok(!html.includes("To reach the next band"));
 });
 
-// ── plan ──────────────────────────────────────────────────────────────────────────
+// ── plan = next week's schedule + quota ───────────────────────────────────────────
 
-test("planSection returns '' when absent, else the teal frame: title with the next-week label, focus line, day-chipped items, ASK rows", () => {
-  assert.equal(planSection(goldenWeek(), "08"), "");
-  const html = planSection(goldenWeekV2(), "08");
-  assert.ok(html.startsWith('<section id="m-plan" class="pad"><div class="planbox"><h2><span class="num">08</span><span>Plan for the week of <span class="nowrap">Jun 1–7</span></span></h2>'));
-  assert.match(html, /<p class="pfocus">Articles before every singular count noun, in every sentence you say\. &lt;script&gt;p\(\)&lt;\/script&gt;<\/p>/);
-  assert.equal((html.match(/<ul class="plan">/g) || []).length, 1);
-  assert.deepEqual(/<ul class="plan">[\s\S]*?<\/ul>/.exec(html)[0].match(/<i class="daychip">([A-Z]+)<\/i>/g), [
-    '<i class="daychip">MON</i>', '<i class="daychip">DAILY</i>', '<i class="daychip">WED</i>', '<i class="daychip">FRI</i>', '<i class="daychip">SUN</i>',
-  ]);
-  assert.ok(html.includes('<span class="task">Re-read the two struck sentences above and say the fixed versions aloud five times.</span><span class="pwhy">Fixes stick when spoken.</span>'));
-  // An empty why renders no pwhy span.
-  assert.match(html, /<span class="task">Describe your lunch in six sentences, one article per noun\. &lt;script&gt;pi\(\)&lt;\/script&gt;<\/span><\/div><\/li>/);
-  assert.ok(html.includes('<h3 class="askh">Ask your tutor next class</h3><ul class="ask"><li><i class="daychip askc">ASK</i><span>Ask Alex to stop you on every missing article.</span></li>'));
-  assert.equal((html.match(/<i class="daychip askc">ASK<\/i>/g) || []).length, 2);
-  assert.ok(html.endsWith("</ul></div></section>"));
+test("planSection returns '' without vm.nextWeek, else the teal frame: title with the next-week label, a Mon–Sun row of class cells and the quota meter — no LLM plan text", () => {
+  assert.equal(planSection(goldenWeek(), "07"), "");
+  assert.equal(planSection({ plan: goldenWeekV2().plan }, "07"), "", "the LLM plan alone renders nothing");
+  const html = planSection(goldenWeekV2(), "07");
+  assert.ok(html.startsWith('<section id="m-plan" class="pad"><div class="planbox"><h2><span class="num">07</span><span>Plan for the week of <span class="nowrap">Jun 1–7</span></span></h2>'));
+  const grid = /<div class="wk sched" role="table"[\s\S]*?<\/div><div class="quota">/.exec(html);
+  assert.ok(grid, "grid then meter");
+  assert.equal((grid[0].match(/role="columnheader"/g) || []).length, 7);
+  assert.equal((grid[0].match(/<div class="wkrow" role="row">/g) || []).length, 1, "one Classes row");
+  assert.ok(grid[0].includes('<span class="wkc on done" role="cell" title="Tue Jun 2 · 20:00 · 60 min · with Alex R. · done"'), "a done class is a teal cell with its time");
+  assert.ok(grid[0].includes('<b>20:00</b>'));
+  assert.ok(grid[0].includes('class="wkc on booked"') && grid[0].includes('<b>18:00</b><b>21:00</b>'), "two Thursday classes stack their times in one booked cell");
+  assert.ok(grid[0].includes('with Sam T. &lt;script&gt;n()&lt;/script&gt; · booked'), "tutor name escaped inside the title");
+  assert.equal((grid[0].match(/<span class="wkc" role="cell" aria-hidden="true"><\/span>/g) || []).length, 5, "five empty days");
+  assert.ok(html.includes('<div class="qbar" role="img" aria-label="1 done, 2 booked, 2 open of 5 classes">'));
+  assert.deepEqual(html.match(/<i class="qs (done|booked|open)"><\/i>/g).map((m) => /qs (\w+)/.exec(m)[1]), ["done", "booked", "booked", "open", "open"]);
+  assert.ok(html.includes('<p class="qcap"><i class="qk done"></i><b>1</b> done · <i class="qk booked"></i><b>2</b> booked · <i class="qk open"></i><b>2</b> open of 5 classes · 60 min each · premium · with Alex R., Sam T. &lt;script&gt;n()&lt;/script&gt;</p>'));
+  assert.ok(!html.includes("Ask your tutor") && !html.includes('class="pfocus"') && !html.includes('<ul class="plan">'), "no plan prose");
+  assert.ok(!html.includes("<script>n()"), "no live script");
+  assert.ok(html.endsWith("</div></div></section>"));
 });
 
-test("planSection omits the ASK block when askTutor is empty and escapes the week label", () => {
+test("planSection: an empty week and an unknown quota degrade honestly (no bar, counts only)", () => {
   const vm = goldenWeekV2();
-  vm.plan.askTutor = [];
-  vm.plan.weekLabel = 'Jun 1–7 <b onclick="x">';
-  const html = planSection(vm, "08");
-  assert.ok(!html.includes("Ask your tutor next class"));
-  assert.ok(html.includes('Plan for the week of <span class="nowrap">Jun 1–7 &lt;b onclick=&quot;x&quot;&gt;</span></span></h2>'));
+  vm.nextWeek = { ...vm.nextWeek, lessons: [], quota: { lessonsPerWeek: null, minutesPerLesson: null, tier: null, planType: null } };
+  const html = planSection(vm, "07");
+  assert.equal((html.match(/class="wkc on/g) || []).length, 0);
+  assert.ok(!html.includes('class="qbar"'), "no meter without a plan size or classes");
+  assert.ok(html.includes('<p class="qcap"><i class="qk done"></i><b>0</b> done · <i class="qk booked"></i><b>0</b> booked</p>'));
+  vm.nextWeek.quota.lessonsPerWeek = 3;
+  vm.nextWeek.lessons = goldenWeekV2().nextWeek.lessons.slice(0, 2);
+  const html2 = planSection(vm, "07");
+  assert.deepEqual(html2.match(/<i class="qs (done|booked|open)"><\/i>/g).map((m) => /qs (\w+)/.exec(m)[1]), ["done", "booked", "open"]);
+  vm.nextWeek.lessons = [...goldenWeekV2().nextWeek.lessons, { lessonId: "N4", startAt: "2026-06-06T10:00:00+08:00", minutes: 60, tutor: "", state: "confirmed" }];
+  const html3 = planSection(vm, "07");
+  assert.equal((html3.match(/<i class="qs /g) || []).length, 4, "more classes than the plan size → the bar grows, open never negative");
+  assert.ok(html3.includes("<b>0</b> open"));
 });
-
-// ── styles ────────────────────────────────────────────────────────────────────────
 
 test("SECTION_STYLES is scoped under .mk, stays ≤ 9 KB, wraps every text cell, and stacks the review band below 760px", () => {
   assert.ok(Buffer.byteLength(SECTION_STYLES, "utf8") <= 9 * 1024, `section CSS ${Buffer.byteLength(SECTION_STYLES, "utf8")} bytes`);
@@ -171,21 +182,3 @@ test("level legibility: the dimension evidence lines and the footnote use --ink-
   assert.ok(html.includes('<p class="lvfoot">Estimated from this week'));
 });
 
-test("plan week grid: 7 day columns, one row per task with a derived label + category chip, Daily as one bar, day cells carry the task, wording behind a details toggle", () => {
-  const html = planSection(goldenWeekV2(), "07");
-  const grid = /<div class="wk" role="table" aria-label="Weekly plan">[\s\S]*?<\/div><details/.exec(html);
-  assert.ok(grid, "the grid renders before the details toggle");
-  assert.equal((grid[0].match(/role="columnheader"/g) || []).length, 7);
-  assert.equal((grid[0].match(/<div class="wkrow" role="row">/g) || []).length, 5, "one row per item");
-  assert.equal((grid[0].match(/class="wkc on /g) || []).length, 4, "Mon · Wed · Fri · Sun cells lit");
-  assert.equal((grid[0].match(/class="wkbar /g) || []).length, 1, "the Daily task is one bar");
-  assert.ok(grid[0].includes('<span class="wklbl" role="rowheader"><b>Re-read the two struck sentences above</b><i class="cat cat-speaking">Speak</i></span>'), "derived label + category chip");
-  assert.ok(grid[0].includes('title="Describe your lunch in six sentences, one article per noun. &lt;script&gt;pi()&lt;/script&gt;"'), "the full task rides the cell, escaped");
-  assert.ok(grid[0].includes('aria-label="Mon: Re-read the two struck sentences above and say the fixed versions aloud five times."'));
-  assert.ok(html.includes('<details class="pdetails"><summary>Task details</summary><ul class="plan">'), "the wording list is collapsed by default");
-  assert.ok(!html.includes("<script>pi()"), "no live script");
-  const labelled = goldenWeekV2();
-  labelled.plan.items[0].label = "Say the fixes aloud";
-  labelled.plan.items[0].category = "speaking";
-  assert.ok(planSection(labelled, "07").includes("<b>Say the fixes aloud</b>"), "a stored label wins over the derived one");
-});

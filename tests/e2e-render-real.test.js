@@ -205,10 +205,12 @@ test(
     assert.equal(vm.plan.items.length, 2);
     assert.ok(/^[A-Z][a-z]{2} \d/.test(vm.plan.weekLabel), `plan.weekLabel looks like a week label: ${vm.plan.weekLabel}`);
     const ids = [...html.matchAll(/<section id="(m-[a-z]+)"/g)].map((m) => m[1]);
-    assert.deepEqual(ids, ["m-level", "m-review", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-plan", "m-classes"]);
-    assert.deepEqual([...html.matchAll(/<span class="num">([0-9]{2}|[A-Z])<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "07", "A"]);
+    // The offline build has no nextWeek block (it is fetched online), so no plan section renders.
+    assert.deepEqual(ids, ["m-level", "m-review", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-classes"]);
+    assert.deepEqual([...html.matchAll(/<span class="num">([0-9]{2}|[A-Z])<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "A"]);
     assert.match(html, /<span class="lvbig">B1\+<\/span>/);
-    assert.ok(html.includes(`Plan for the week of <span class="nowrap">${esc(vm.plan.weekLabel)}</span></span></h2>`));
+    assert.ok(!html.includes("Plan for the week of"), "the LLM plan is data only — the plan section needs the online nextWeek block");
+    assert.equal(typeof vm.plan.focus, "string", "…but the VM still carries the plan");
     const pqCards = (html.match(/<button class="pq" aria-expanded="false" aria-controls="pa\d+">/g) || []).length;
     assert.ok(pqCards >= 1, `≥1 tap-to-reveal card in HTML (got ${pqCards})`);
     assert.ok(html.includes("querySelectorAll('.pq')"), "reveal script shipped (practice present)");

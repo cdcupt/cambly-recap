@@ -209,6 +209,20 @@ export function tutorsUrl(base, ids) {
   return `${b}/api/tutors?${ids.map((t) => `ids%5B%5D=${t}`).join("&")}&viewAs=student&_=1`;
 }
 
+/** Every lesson (any state) scheduled inside [minMs, maxMs) — feeds the next-week schedule. */
+export function weekListingUrl(base, uid, minMs, maxMs) {
+  const b = base.replace(/\/$/, "");
+  return (
+    `${b}/api/lessons_v2?studentId=${uid}&minScheduledStartAt=${minMs}&maxScheduledStartAt=${maxMs}` +
+    `&limit=50&sort=1&viewAs=student&_=1`
+  );
+}
+
+/** The student's own user record — `subscriptionInfo` carries the weekly plan (days × minutes). */
+export function userUrl(base, uid) {
+  return `${base.replace(/\/$/, "")}/api/users/${uid}?viewAs=student&_=1`;
+}
+
 /** Per-lesson endpoint catalog minus video (transcript-only per PRD). */
 export function endpointUrls(base, uid, lid, lesson = {}) {
   const b = base.replace(/\/$/, "");

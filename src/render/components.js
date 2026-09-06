@@ -47,7 +47,7 @@ export const SECTION_DEFS = Object.freeze([
   { key: "grammar", id: "m-grammar", chip: "Grammar", present: () => true },
   { key: "phrasing", id: "m-phrasing", chip: "Phrasing", present: () => true },
   { key: "practice", id: "m-practice", chip: "Practice", present: () => true },
-  { key: "plan", id: "m-plan", chip: "Plan", present: (vm) => isBlock(vm && vm.plan) },
+  { key: "plan", id: "m-plan", chip: "Next week", present: (vm) => isBlock(vm && vm.nextWeek) },
   { key: "classes", id: "m-classes", chip: "Class log", present: () => true, appendix: true },
 ]);
 
