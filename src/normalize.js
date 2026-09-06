@@ -2,9 +2,10 @@
 //
 // Merges the raw endpoint files into one normalized lesson: unwraps the
 // {result: …} envelope and Mongo-style $date/$oid wrappers, tags transcript lines
-// with speaker student|tutor by comparing userId to $CAMBLY_UID, and lifts
-// corrections to {id, said, fix, why, category, ts}. Pure function of the raw
-// files — deterministic and fully covered by fixture tests.
+// with speaker student|tutor by comparing userId to $CAMBLY_UID, merges the ASR
+// fragments into speaker segments (mergeTurns), resolves the tutor through the flat
+// tutors map, and lifts corrections to {id, said, fix, why, category, ts}. Pure
+// function of the raw files — deterministic and fully covered by fixture tests.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -61,6 +62,75 @@ export function normalizeTranscript(lessonTranscript, uid) {
       ts: num(t.startOffsetSeconds ?? t.ts),
       speaker: t.userId === uid ? "student" : "tutor",
     }));
+}
+
+/** Whitespace-separated word count of a line ("" → 0). */
+function wordCount(text) {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+/** Order merged runs by ts when every run has one (input order breaks ties), else by input order. */
+function sortRuns(runs) {
+  const allTs = runs.every((r) => typeof r.ts === "number" && Number.isFinite(r.ts));
+  return [...runs].sort((a, b) => (allTs ? a.ts - b.ts || a.idx - b.idx : a.idx - b.idx));
+}
+
+/**
+ * Merge the ASR fragments of a speaker-tagged transcript into speaker segments.
+ *
+ * Cambly's ASR splits at every speaker switch, so a student sentence arrives chopped
+ * by the tutor's "Yeah." / "uh" (student median line = 2 words). Rules, applied in
+ * transcript order and symmetrically for both speakers:
+ *   - consecutive lines of one speaker form a run (each line trimmed, joined by one space);
+ *   - an INTERJECTION — a line of the other speaker with ≤ bridgeWords words — does not
+ *     end the run: the run continues across it and the interjection is emitted as its
+ *     own segment (or joins that speaker's own run when it, too, is bridged);
+ *   - a longer other-speaker line ends the run.
+ * Blank lines are dropped (no text lost — the multiset of words is preserved). Each
+ * segment carries `ts` (first line's ts) and `n` (lines merged); output is sorted by ts
+ * (stable, input order breaks ties). Pure and deterministic.
+ *
+ * @param {{speaker:string,text:string,ts:number|null}[]} lines normalized transcript
+ * @param {{bridgeWords?:number}} [opts]
+ * @returns {{speaker:string,text:string,ts:number|null,n:number}[]}
+ */
+export function mergeTurns(lines, { bridgeWords = 3 } = {}) {
+  const src = (Array.isArray(lines) ? lines : [])
+    .map((l, idx) =>
+      l && typeof l === "object"
+        ? { speaker: l.speaker, text: String(l.text ?? "").trim(), ts: l.ts ?? null, idx }
+        : null,
+    )
+    .filter((l) => l && l.text !== "");
+
+  const closed = [];
+  const open = new Map(); // speaker → the run still accepting lines
+  const close = (speaker) => {
+    if (open.has(speaker)) closed.push(open.get(speaker));
+    open.delete(speaker);
+  };
+
+  for (const line of src) {
+    // A line longer than an interjection ends every OTHER speaker's open run.
+    if (wordCount(line.text) > bridgeWords) {
+      for (const speaker of [...open.keys()]) if (speaker !== line.speaker) close(speaker);
+    }
+    const run = open.get(line.speaker);
+    open.set(
+      line.speaker,
+      run
+        ? { ...run, parts: [...run.parts, line.text], n: run.n + 1 }
+        : { speaker: line.speaker, parts: [line.text], ts: line.ts, n: 1, idx: line.idx },
+    );
+  }
+  for (const speaker of [...open.keys()]) close(speaker);
+
+  return sortRuns(closed).map((r) => ({
+    speaker: r.speaker,
+    text: r.parts.join(" "),
+    ts: r.ts,
+    n: r.n,
+  }));
 }
 
 // JSON-structure tokens that only surface when a serialized object bleeds into a text
@@ -206,24 +276,48 @@ function resolveTopic(lesson, lessonPlan) {
   return null;
 }
 
+/** The lesson's tutor id from a lessons_v2 record: `tutorId`, else `tutorIds[0]`, else null. */
+export function lessonTutorId(lesson) {
+  if (!lesson || typeof lesson !== "object") return null;
+  return lesson.tutorId || (Array.isArray(lesson.tutorIds) ? lesson.tutorIds[0] : null) || null;
+}
+
+/** A tutor record's display name: displayName → name → "first last" → null (a bare string is the name). */
+export function tutorDisplayName(t) {
+  if (typeof t === "string") return strOrNull(t);
+  if (!t || typeof t !== "object") return null;
+  const full = [t.firstName, t.lastName].filter((s) => typeof s === "string" && s.trim()).join(" ");
+  return strOrNull(t.displayName) || strOrNull(t.name) || strOrNull(full);
+}
+
+/**
+ * Normalize any /api/tutors payload into the flat tutors map `{id: {id, displayName}}`
+ * (the data/tutors.json contract). Accepts the live object-map shape
+ * `{result: {"<id>": {id, displayName, …}}}`, the older array shape
+ * `{result: [{id | _id.$oid, displayName | name | firstName+lastName}]}`, an already-flat
+ * map, or nothing (→ {}). Entries without a resolvable id or name are dropped. Pure.
+ */
+export function normalizeTutors(payload) {
+  const list = unwrap(payload);
+  if (!list || typeof list !== "object") return {};
+  const entries = Array.isArray(list)
+    ? list.map((t) => [t && typeof t === "object" ? t.id || unwrapOid(t._id) : null, t])
+    : Object.entries(list);
+  return entries.reduce((map, [id, t]) => {
+    const displayName = tutorDisplayName(t);
+    return typeof id === "string" && id && displayName ? { ...map, [id]: { id, displayName } } : map;
+  }, {});
+}
+
+/** Merge two tutors payloads into one flat map: every id in either survives, a newer name wins. */
+export function mergeTutors(prev, next) {
+  return { ...normalizeTutors(prev), ...normalizeTutors(next) };
+}
+
 function resolveTutor(lesson, tutors) {
-  const tid = lesson.tutorId || (Array.isArray(lesson.tutorIds) ? lesson.tutorIds[0] : null);
-  const list = unwrap(tutors);
-  if (Array.isArray(list) && tid) {
-    const t = list.find((x) => (x.id || unwrapOid(x._id)) === tid);
-    if (t) {
-      return (
-        t.displayName ||
-        t.name ||
-        [t.firstName, t.lastName].filter(Boolean).join(" ") ||
-        null
-      );
-    }
-  } else if (list && typeof list === "object" && tid && list[tid]) {
-    const t = list[tid];
-    return typeof t === "string" ? t : t.displayName || t.name || null;
-  }
-  return lesson.tutorName || null;
+  const tid = lessonTutorId(lesson);
+  const hit = tid ? normalizeTutors(tutors)[tid] : undefined;
+  return hit ? hit.displayName : lesson.tutorName || null;
 }
 
 /**
@@ -246,6 +340,7 @@ export function normalizeLesson(raw, { uid = camblyUid() } = {}) {
 
   const startEpoch = unwrapDate(lesson.scheduledStartAt);
   const hasEpoch = typeof startEpoch === "number" && Number.isFinite(startEpoch);
+  const transcript = normalizeTranscript(raw.lesson_transcript, uid);
 
   return {
     lessonId,
@@ -256,7 +351,8 @@ export function normalizeLesson(raw, { uid = camblyUid() } = {}) {
     tutor: resolveTutor(lesson, raw.tutors),
     topic: resolveTopic(lesson, raw.lesson_plan),
     stats: normalizeStats(raw.user_lesson_stats),
-    transcript: normalizeTranscript(raw.lesson_transcript, uid),
+    transcript,
+    segments: mergeTurns(transcript),
     corrections: normalizeCorrections(raw.corrective_feedback_corrections, { lessonId }),
     tutorNotes: collectTutorNotes(raw),
     aiTutorFeedback: normalizeAiTutorFeedback(raw),
@@ -264,7 +360,8 @@ export function normalizeLesson(raw, { uid = camblyUid() } = {}) {
   };
 }
 
-const ENDPOINT_FILES = {
+/** Raw endpoint name → on-disk filename inside a lesson dir (run.js writes them, normalizeLessonDir reads them). */
+export const ENDPOINT_FILES = {
   lesson_transcript: "lesson_transcript.json",
   talon_chats: "talon_chats.json",
   corrective_feedback_corrections: "corrective_feedback_corrections.json",
@@ -279,7 +376,10 @@ const ENDPOINT_FILES = {
 /**
  * Read a raw lesson directory and normalize it. The listing record (_lesson.json)
  * and tutors map may be passed in (they live outside the per-lesson dir in the
- * archive fixtures) or read from _lesson.json / tutors.json in the dir.
+ * archive fixtures) or read from _lesson.json / tutors.json in the dir. A passed
+ * `tutors` payload (any shape normalizeTutors accepts — run.js passes the persisted
+ * data/tutors.json map) is merged OVER the dir's own tutors.json, so a tutor known to
+ * either source resolves.
  */
 export function normalizeLessonDir(dir, { fsImpl = fs, uid = camblyUid(), lesson, tutors } = {}) {
   const read = (file) => {
@@ -291,7 +391,7 @@ export function normalizeLessonDir(dir, { fsImpl = fs, uid = camblyUid(), lesson
   };
   const raw = {
     lesson: lesson || read("_lesson.json") || {},
-    tutors: tutors || read("tutors.json"),
+    tutors: mergeTutors(read("tutors.json"), tutors),
   };
   for (const [key, file] of Object.entries(ENDPOINT_FILES)) raw[key] = read(file);
   return normalizeLesson(raw, { uid });

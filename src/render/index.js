@@ -5,10 +5,14 @@
 // don't store). The ● NEW badge lands on the latest NON-empty week only — if the
 // newest week is empty the badge moves back. When exactly one published week
 // exists, a first-run intro sentence renders so day one is never an empty shell.
+// With two or more published weeks the "Your progress" block (chart.js) sits
+// between the first-run slot and the weeks list; its CSS (CHART_STYLES) is inlined
+// once in the shared <head> stylesheet by layout.js, after STYLES + SECTION_STYLES.
 
 import { htmlDocument } from "./layout.js";
 import { banner, indexRow } from "./components.js";
 import { pluralize } from "./dates.js";
+import { progressBlock } from "./chart.js";
 
 function totalsBar(weeks) {
   const t = weeks.reduce(
@@ -55,6 +59,9 @@ export function renderIndex(weeks, { siteState = {} } = {}) {
       ? `<p class="firstrun pad">Your first recap is live. From now on a new week lands here automatically every Monday.</p>`
       : "";
 
+  // Derived at render time from classes[].stats / stats.minutes; "" below two weeks.
+  const progress = progressBlock(sorted);
+
   const body =
     banner(siteState) +
     `<header class="pad">` +
@@ -65,6 +72,7 @@ export function renderIndex(weeks, { siteState = {} } = {}) {
     `</header>` +
     `<main>` +
     firstRun +
+    progress +
     `<nav class="pad" aria-label="All weeks"><ul class="weeks">${rows}</ul></nav>` +
     `</main>`;
 

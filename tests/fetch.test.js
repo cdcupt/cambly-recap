@@ -16,10 +16,12 @@ import {
   resolveUserAgent,
   authHeaders,
   isLessonRawComplete,
+  listCompleteRawLessons,
   AuthExpiredError,
   FetchFailedError,
   FALLBACK_UA,
 } from "../src/fetch.js";
+import { weekIdOf } from "../src/week.js";
 
 const noSleep = async () => {};
 const FAST = { sleep: noSleep, backoff: [0, 0, 0] };
@@ -267,5 +269,36 @@ test("isLessonRawComplete is true only with a transcript and no __status stubs",
     assert.equal(isLessonRawComplete(dir), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── Offline inventory (--rebuild) ────────────────────────────────────────────
+
+test("listCompleteRawLessons lists only complete, dated raw dirs with their CST weekId", () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cambly-rawlist-"));
+  const mk = (lid, files) => {
+    const dir = path.join(dataDir, "raw", lid);
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [f, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), JSON.stringify(body));
+  };
+  const START = 1778639400000; // Wed 2026-05-13 10:30 CST → week 2026-05-11
+  try {
+    // Arrange
+    mk("L-ok", { "_lesson.json": { id: "L-ok", scheduledStartAt: { $date: START } }, "lesson_transcript.json": { transcript: [] } });
+    mk("L-stub", { "_lesson.json": { id: "L-stub", scheduledStartAt: { $date: START } }, "lesson_transcript.json": { transcript: [] }, "talon_chats.json": { __status: 500 } });
+    mk("L-undated", { "_lesson.json": { id: "L-undated" }, "lesson_transcript.json": { transcript: [] } });
+    mk("L-nolisting", { "lesson_transcript.json": { transcript: [] } });
+    mk("L-notranscript", { "_lesson.json": { id: "L-notranscript", scheduledStartAt: { $date: START } } });
+    fs.writeFileSync(path.join(dataDir, "raw", ".DS_Store"), "junk");
+
+    // Act
+    const out = listCompleteRawLessons(dataDir);
+
+    // Assert
+    assert.deepEqual(out, [{ lessonId: "L-ok", dir: path.join(dataDir, "raw", "L-ok"), startMs: START, weekId: weekIdOf(START) }]);
+    assert.equal(out[0].weekId, "2026-05-11");
+    assert.deepEqual(listCompleteRawLessons(path.join(dataDir, "nowhere")), [], "a missing raw dir is an empty inventory");
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });

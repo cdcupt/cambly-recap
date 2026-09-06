@@ -13,6 +13,12 @@ import {
   normalizeChat,
   normalizeAiTutorFeedback,
   cleanCorrectionText,
+  mergeTurns,
+  normalizeTutors,
+  mergeTutors,
+  tutorDisplayName,
+  lessonTutorId,
+  ENDPOINT_FILES,
   unwrap,
   unwrapOid,
   unwrapDate,
@@ -381,3 +387,236 @@ test(
     }
   },
 );
+
+// ── mergeTurns: ASR fragments → speaker segments (spec A3) ───────────────────
+
+const L = (speaker, text, ts) => ({ speaker, text, ts });
+const words = (s) => s.split(/\s+/).filter(Boolean);
+const median = (xs) => {
+  const a = [...xs].sort((x, y) => x - y);
+  if (!a.length) return 0;
+  return a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2;
+};
+const wordMultiset = (lines) => words(lines.map((l) => l.text).join(" ")).sort().join("\n");
+
+test("mergeTurns joins consecutive same-speaker lines with one space, trims each, counts them in n", () => {
+  const out = mergeTurns([
+    L("student", "  I went ", 1),
+    L("student", "to the mountain.", 2),
+    L("tutor", "That sounds lovely. What did you do there?", 3),
+  ]);
+  assert.deepEqual(out, [
+    { speaker: "student", text: "I went to the mountain.", ts: 1, n: 2 },
+    { speaker: "tutor", text: "That sounds lovely. What did you do there?", ts: 3, n: 1 },
+  ]);
+});
+
+test("mergeTurns bridges a ≤3-word interjection and emits the interjection as its own segment", () => {
+  const out = mergeTurns([
+    L("student", "Last year on Sunday I always", 1),
+    L("tutor", "Mm-hmm.", 2),
+    L("student", "drive on the track to make some activity.", 3),
+    L("tutor", "Very nice. Tell me more about that.", 4),
+  ]);
+  assert.deepEqual(
+    out.map((s) => [s.speaker, s.text, s.n]),
+    [
+      ["student", "Last year on Sunday I always drive on the track to make some activity.", 2],
+      ["tutor", "Mm-hmm.", 1],
+      ["tutor", "Very nice. Tell me more about that.", 1],
+    ],
+  );
+});
+
+test("mergeTurns: a longer other-speaker line (> bridgeWords) ends the run", () => {
+  const out = mergeTurns([L("student", "I think", 1), L("tutor", "What do you think?", 2), L("student", "it is good.", 3)]);
+  assert.deepEqual(
+    out.map((s) => [s.speaker, s.text]),
+    [["student", "I think"], ["tutor", "What do you think?"], ["student", "it is good."]],
+  );
+});
+
+test("mergeTurns bridgeWords is an inclusive limit (3 words bridge, 4 do not) and is configurable", () => {
+  const lines = (interjection) => [L("student", "So we", 1), L("tutor", interjection, 2), L("student", "need to work on Saturday.", 3)];
+  const studentSegs = (out) => out.filter((s) => s.speaker === "student").map((s) => s.text);
+
+  assert.deepEqual(studentSegs(mergeTurns(lines("Yes, of course."))), ["So we need to work on Saturday."]);
+  assert.deepEqual(studentSegs(mergeTurns(lines("Yes, of course, right."))), ["So we", "need to work on Saturday."]);
+  assert.deepEqual(studentSegs(mergeTurns(lines("Yes, of course, right."), { bridgeWords: 4 })), ["So we need to work on Saturday."]);
+});
+
+test("mergeTurns reassembles BOTH speakers' fragments (S:for | T:Um, what | S:me, | T:about you?)", () => {
+  const out = mergeTurns([L("student", "for", 1), L("tutor", "Um, what", 2), L("student", "me,", 3), L("tutor", "about you?", 4)]);
+  assert.deepEqual(out, [
+    { speaker: "student", text: "for me,", ts: 1, n: 2 },
+    { speaker: "tutor", text: "Um, what about you?", ts: 2, n: 2 },
+  ]);
+});
+
+test("mergeTurns output is ts-ordered even when a run closes after a later-starting one", () => {
+  // The tutor's run spans ts 1..3 and the student's "Yes" (ts 2) sits inside it.
+  const out = mergeTurns([
+    L("student", "Okay", 0),
+    L("tutor", "So what did you do next?", 1),
+    L("student", "Yes", 2),
+    L("tutor", "Tell me about the weekend please.", 3),
+  ]);
+  assert.deepEqual(
+    out.map((s) => [s.speaker, s.ts, s.n]),
+    [["student", 0, 1], ["tutor", 1, 2], ["student", 2, 1]],
+  );
+});
+
+test("mergeTurns loses no text: the word multiset is preserved and blank lines are dropped", () => {
+  const lines = [
+    L("student", "I go to", 1),
+    L("tutor", "   ", 1.5),
+    L("tutor", "uh", 2),
+    L("student", "the mountain with my family.", 3),
+    L("tutor", "", 3.5),
+    L("tutor", "That sounds lovely. What did you do there?", 4),
+  ];
+  const out = mergeTurns(lines);
+  assert.equal(wordMultiset(out), wordMultiset(lines));
+  assert.equal(out.reduce((n, s) => n + s.n, 0), 4, "blank lines are not counted as merged lines");
+  assert.ok(out.every((s) => s.text.trim() !== ""));
+});
+
+test("mergeTurns keeps input order when a line lacks a ts, and tolerates empty or non-array input", () => {
+  const out = mergeTurns([L("tutor", "Hello there, how are you today?", null), L("student", "Fine", 5)]);
+  assert.deepEqual(out.map((s) => [s.speaker, s.ts]), [["tutor", null], ["student", 5]]);
+  assert.deepEqual(mergeTurns([]), []);
+  assert.deepEqual(mergeTurns(null), []);
+  assert.deepEqual(mergeTurns([null, L("student", "hi", 1)]), [{ speaker: "student", text: "hi", ts: 1, n: 1 }]);
+});
+
+test("mergeTurns is pure: the input lines are not mutated", () => {
+  const lines = [L("student", " a ", 1), L("student", "b", 2)];
+  const copy = JSON.parse(JSON.stringify(lines));
+  mergeTurns(lines);
+  assert.deepEqual(lines, copy);
+});
+
+test("normalizeLesson sets segments from the transcript and leaves transcript as-is", () => {
+  const n = normalizeLessonDir(SYNTH_DIR, { uid: SYNTH_UID });
+  // Every synthetic line is ≥ 6 words, so nothing bridges: one segment per line, verbatim.
+  assert.equal(n.transcript.length, 6);
+  assert.deepEqual(
+    n.segments,
+    n.transcript.map((t) => ({ speaker: t.speaker, text: t.text, ts: t.ts, n: 1 })),
+  );
+});
+
+test(
+  "mergeTurns on the recent fixtures: substantive student segments median ≥ 12 words, no text lost, ts-ordered",
+  { skip: recentFixturesSkip() },
+  () => {
+    for (const dir of presentRecentLessonDirs()) {
+      const n = normalizeLessonDir(dir, { uid: REAL_STUDENT_UID });
+      // No text lost.
+      assert.equal(wordMultiset(n.segments), wordMultiset(n.transcript), `word multiset preserved in ${dir}`);
+      // Stable ts order.
+      for (let i = 1; i < n.segments.length; i++) {
+        assert.ok(n.segments[i - 1].ts <= n.segments[i].ts, `segments ts-ordered in ${dir}`);
+      }
+      // Merging happened: the ASR chops the student's median line to ~2 words …
+      const rawStudent = n.transcript.filter((t) => t.speaker === "student").map((t) => words(t.text).length);
+      const segStudent = n.segments.filter((s) => s.speaker === "student").map((s) => words(s.text).length);
+      assert.ok(segStudent.length < rawStudent.length, `fewer student segments than raw lines in ${dir}`);
+      assert.ok(median(rawStudent) <= 3, `raw student lines are fragments in ${dir}`);
+      // … and the student's SUBSTANTIVE segments (everything beyond a ≤3-word backchannel,
+      // which the rule deliberately keeps as its own segment) read as whole utterances.
+      const substantive = segStudent.filter((w) => w > 3);
+      assert.ok(median(substantive) >= 12, `median substantive student words ≥ 12 in ${dir} (got ${median(substantive)})`);
+    }
+  },
+);
+
+// ── tutors map (spec A1): {id: {id, displayName}} from either endpoint shape ──
+
+test("normalizeTutors flattens the live object-map payload {result: {id: record}}", () => {
+  const map = normalizeTutors({ result: { t1: { id: "t1", displayName: "Alex R.", country: "US", rating: 4.9 } } });
+  assert.deepEqual(map, { t1: { id: "t1", displayName: "Alex R." } });
+});
+
+test("normalizeTutors flattens the array payload, keying by id or _id.$oid and deriving the name", () => {
+  const map = normalizeTutors({
+    result: [
+      { id: "a", displayName: "Sam Rivers", firstName: "Sam", lastName: "Rivers" },
+      { _id: { $oid: "b" }, name: "Bea" },
+      { id: "c", firstName: "Cy", lastName: "Do" },
+      { id: "d" }, // no resolvable name → dropped
+      null,
+    ],
+  });
+  assert.deepEqual(map, {
+    a: { id: "a", displayName: "Sam Rivers" },
+    b: { id: "b", displayName: "Bea" },
+    c: { id: "c", displayName: "Cy Do" },
+  });
+});
+
+test("normalizeTutors accepts an already-flat map (string values too) and yields {} for nothing usable", () => {
+  assert.deepEqual(normalizeTutors({ t1: "Alex R." }), { t1: { id: "t1", displayName: "Alex R." } });
+  assert.deepEqual(normalizeTutors({ t1: { id: "t1", displayName: "Alex R." } }), { t1: { id: "t1", displayName: "Alex R." } });
+  assert.deepEqual(normalizeTutors(undefined), {});
+  assert.deepEqual(normalizeTutors({ result: [] }), {});
+  assert.deepEqual(normalizeTutors({ __status: 500 }), {}); // a dead-endpoint stub
+});
+
+test("mergeTutors never shrinks: ids from both sides survive and the newer name wins", () => {
+  const prev = { a: { id: "a", displayName: "Old A" }, b: { id: "b", displayName: "B" } };
+  const next = { result: { a: { id: "a", displayName: "New A" }, c: { id: "c", displayName: "C" } } };
+  const merged = mergeTutors(prev, next);
+  assert.deepEqual(merged, {
+    a: { id: "a", displayName: "New A" },
+    b: { id: "b", displayName: "B" },
+    c: { id: "c", displayName: "C" },
+  });
+  assert.deepEqual(prev, { a: { id: "a", displayName: "Old A" }, b: { id: "b", displayName: "B" } }, "inputs not mutated");
+  assert.deepEqual(mergeTutors(prev, undefined), prev);
+});
+
+test("tutorDisplayName / lessonTutorId resolve the name and id fields in priority order", () => {
+  assert.equal(tutorDisplayName({ displayName: "D", name: "N" }), "D");
+  assert.equal(tutorDisplayName({ name: "N", firstName: "F" }), "N");
+  assert.equal(tutorDisplayName({ firstName: "F", lastName: "L" }), "F L");
+  assert.equal(tutorDisplayName({ firstName: "F" }), "F");
+  assert.equal(tutorDisplayName({ displayName: "  " }), null);
+  assert.equal(tutorDisplayName("Plain"), "Plain");
+  assert.equal(tutorDisplayName(null), null);
+  assert.equal(lessonTutorId({ tutorId: "x", tutorIds: ["y"] }), "x");
+  assert.equal(lessonTutorId({ tutorIds: ["y"] }), "y");
+  assert.equal(lessonTutorId({}), null);
+  assert.equal(lessonTutorId(null), null);
+});
+
+test("normalizeLesson resolves the tutor through the raw tutors.json shape {result: <object map>}", () => {
+  const n = normalizeLesson(
+    { lesson: { id: "L", tutorIds: ["t9"] }, tutors: { result: { t9: { id: "t9", displayName: "Alex R." } } } },
+    { uid: "S" },
+  );
+  assert.equal(n.tutor, "Alex R.");
+});
+
+test("normalizeLesson falls back to lesson.tutorName (else null) when the tutor is not in the map", () => {
+  const withName = normalizeLesson({ lesson: { id: "L", tutorId: "zz", tutorName: "Listed" }, tutors: { result: {} } }, { uid: "S" });
+  assert.equal(withName.tutor, "Listed");
+  const none = normalizeLesson({ lesson: { id: "L", tutorId: "zz" }, tutors: { result: [] } }, { uid: "S" });
+  assert.equal(none.tutor, null);
+});
+
+test("normalizeLessonDir merges a passed tutors map OVER the dir's own tutors.json", () => {
+  // The synthetic dir's tutors.json knows tutor999 as "Sam Rivers".
+  const renamed = normalizeLessonDir(SYNTH_DIR, { uid: SYNTH_UID, tutors: { tutor999: { id: "tutor999", displayName: "Sam R." } } });
+  assert.equal(renamed.tutor, "Sam R.");
+  // A passed map for a DIFFERENT tutor leaves the dir's own entry resolvable.
+  const kept = normalizeLessonDir(SYNTH_DIR, { uid: SYNTH_UID, tutors: { other: { id: "other", displayName: "X" } } });
+  assert.equal(kept.tutor, "Sam Rivers");
+});
+
+test("ENDPOINT_FILES is the single raw-file catalog shared with run.js", () => {
+  assert.equal(Object.keys(ENDPOINT_FILES).length, 9);
+  assert.equal(ENDPOINT_FILES.lesson_transcript, "lesson_transcript.json");
+  assert.equal(ENDPOINT_FILES.corrective_feedback_corrections, "corrective_feedback_corrections.json");
+});

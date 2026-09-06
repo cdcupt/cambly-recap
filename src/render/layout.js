@@ -6,6 +6,8 @@
 // boot script flips it to "js".
 
 import { STYLES } from "./styles.js";
+import { SECTION_STYLES } from "./sections.js";
+import { CHART_STYLES } from "./chart.js";
 import { BOOT } from "./script.js";
 
 // Inline favicon: a small serif-paper tile with the accent dot. encodeURIComponent
@@ -31,7 +33,7 @@ export function htmlDocument({ title, bodyClass, body, script = "" }) {
     `<meta name="viewport" content="width=device-width,initial-scale=1">\n` +
     `<title>${title}</title>\n` +
     `<link rel="icon" href="${FAVICON}">\n` +
-    `<style>${STYLES}</style>\n` +
+    `<style>${STYLES}${SECTION_STYLES}${CHART_STYLES}</style>\n` +
     `<script>${BOOT}</script>\n` +
     `</head>\n` +
     `<body class="${bodyClass}">\n` +
