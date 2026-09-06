@@ -148,11 +148,9 @@ export function levelSection(vm, num = "02") {
   );
 }
 
-// ── Plan = next week's schedule + quota (WeekVM.nextWeek; builder-owned, no LLM text) ────
+// ── Plan = the weeks ahead: classes + weekly quota (WeekVM.schedule; builder-owned) ────
 
 const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const lessonDay = (l) => weekdayShort(l.startAt);
 
 function lessonTitle(l) {
   const parts = [dateLabel(l.startAt), timeLabel(l.startAt)];
@@ -162,26 +160,20 @@ function lessonTitle(l) {
   return parts.filter(Boolean).join(" · ");
 }
 
-/** One row of seven day cells; a cell lists its lessons' start times, filled by state. */
-function scheduleGrid(lessons) {
-  const head =
-    `<div class="wkhead" role="row"><span class="wklbl" aria-hidden="true"></span>` +
-    WEEK_DAYS.map((d) => `<span class="wkd" role="columnheader">${d.toUpperCase()}</span>`).join("") +
-    `</div>`;
-  const cells = WEEK_DAYS.map((d) => {
-    const here = lessons.filter((l) => lessonDay(l) === d);
+/** Seven day cells for one week; a cell lists its lessons' start times, filled by state. */
+function dayCells(lessons) {
+  return WEEK_DAYS.map((d) => {
+    const here = lessons.filter((l) => weekdayShort(l.startAt) === d);
     if (!here.length) return `<span class="wkc" role="cell" aria-hidden="true"></span>`;
     const state = here.every((l) => l.state === "done") ? "done" : "booked";
     const times = here.map((l) => `<b>${esc(timeLabel(l.startAt))}</b>`).join("");
     const title = here.map(lessonTitle).join(" / ");
     return `<span class="wkc on ${state}" role="cell" title="${esc(title)}" aria-label="${esc(title)}">${times}</span>`;
   }).join("");
-  const row = `<div class="wkrow" role="row"><span class="wklbl" role="rowheader"><b>Classes</b></span>${cells}</div>`;
-  return `<div class="wk sched" role="table" aria-label="Next week's classes">${head}${row}</div>`;
 }
 
-/** The weekly plan as a segmented meter: done · booked · open, one segment per class in the plan. */
-function quotaMeter(lessons, quota) {
+/** The week's plan as a segmented meter (done · booked · open) + a terse count line. */
+function weekMeter(lessons, quota) {
   const q = quota || {};
   const done = lessons.filter((l) => l.state === "done").length;
   const booked = lessons.filter((l) => l.state === "confirmed").length;
@@ -194,38 +186,59 @@ function quotaMeter(lessons, quota) {
   const key = (k) => `<i class="qk ${k}"></i>`;
   const bits = [`${key("done")}<b>${done}</b> done`, `${key("booked")}<b>${booked}</b> booked`];
   if (open !== null) bits.push(`${key("open")}<b>${open}</b> open`);
-  const of = perWeek === null ? "" : ` of ${perWeek} classes`;
-  const each = Number.isInteger(q.minutesPerLesson) ? ` · ${q.minutesPerLesson} min each` : "";
-  const tier = hasText(q.tier) ? ` · ${esc(q.tier)}` : "";
-  const tutors = [...new Set(lessons.map((l) => l.tutor).filter(hasText))];
-  const withT = tutors.length ? ` · with ${esc(tutors.join(", "))}` : "";
-  const label = `${done} done, ${booked} booked${open === null ? "" : `, ${open} open`}${of}`;
+  const label = `${done} done, ${booked} booked${open === null ? "" : `, ${open} open`}${perWeek === null ? "" : ` of ${perWeek}`}`;
   return (
-    `<div class="quota">` +
-    (total ? `<div class="qbar" role="img" aria-label="${esc(label)}">${segs}</div>` : "") +
-    `<p class="qcap">${bits.join(" · ")}${esc(of)}${each}${tier}${withT}</p>` +
-    `</div>`
+    `<div class="wkmeter" role="row"><span class="wklbl" aria-hidden="true"></span>` +
+    `<span class="qwrap" role="cell">` +
+    (total ? `<span class="qbar" role="img" aria-label="${esc(label)}">${segs}</span>` : "") +
+    `<span class="qcap">${bits.join(" · ")}</span></span></div>`
   );
 }
 
+/** One week = a classes row (label = the week's dates) followed by its meter row. */
+function weekRows(week, quota) {
+  const lessons = arr(week.lessons).filter((l) => l && hasText(l.startAt));
+  return (
+    `<div class="wkrow" role="row"><span class="wklbl" role="rowheader"><b>${weekLabelSpan(week.weekLabel)}</b></span>${dayCells(lessons)}</div>` +
+    weekMeter(lessons, quota)
+  );
+}
+
+/** Plan facts + tutors, once, under the grid. */
+function planFacts(schedule) {
+  const q = schedule.quota || {};
+  const bits = [];
+  if (Number.isInteger(q.lessonsPerWeek) && Number.isInteger(q.minutesPerLesson)) bits.push(`${q.lessonsPerWeek} × ${q.minutesPerLesson} min per week`);
+  else if (Number.isInteger(q.lessonsPerWeek)) bits.push(`${q.lessonsPerWeek} classes per week`);
+  if (hasText(q.tier)) bits.push(esc(q.tier));
+  const tutors = [...new Set(arr(schedule.weeks).flatMap((w) => arr(w.lessons)).map((l) => l && l.tutor).filter(hasText))];
+  if (tutors.length) bits.push(`with ${esc(tutors.join(", "))}`);
+  return bits.length ? `<p class="pfacts">${bits.join(" · ")}</p>` : "";
+}
+
 /**
- * Section — "Plan for the week of <weekLabel>" (vm.nextWeek): the coming week's booked
- * classes on a Mon–Sun grid and the weekly-plan meter. Returns "" when vm.nextWeek is absent.
+ * Section — "Plan for the weeks ahead" (vm.schedule): the week the recap is published in
+ * and the one after it, each as a Mon–Sun row of class cells plus its quota meter.
+ * Returns "" when vm.schedule is absent.
  * @param {string} [num] the section's "0N" number
  */
 export function planSection(vm, num = "07") {
-  const n = vm && vm.nextWeek;
-  if (!n || typeof n !== "object") return "";
-  const lessons = arr(n.lessons).filter((l) => l && hasText(l.startAt));
-  // The h2 is a flex row (number · title): the title is ONE span so its flowing text and
-  // the non-breaking week label wrap together instead of becoming two flex items.
-  const title = `<span>Plan for the week of ${weekLabelSpan(n.weekLabel)}</span>`;
+  const sc = vm && vm.schedule;
+  if (!sc || typeof sc !== "object" || !arr(sc.weeks).length) return "";
+  const weeks = arr(sc.weeks);
+  const first = weeks[0];
+  const last = weeks[weeks.length - 1];
+  const span = weeks.length > 1 ? `${first.startDate} to ${last.endDate}` : first.weekLabel;
+  const head =
+    `<div class="wkhead" role="row"><span class="wklbl" aria-hidden="true"></span>` +
+    WEEK_DAYS.map((d) => `<span class="wkd" role="columnheader">${d.toUpperCase()}</span>`).join("") +
+    `</div>`;
   return (
     `<section id="m-plan" class="pad"><div class="planbox">` +
-    `<h2><span class="num">${esc(num)}</span>${title}</h2>` +
-    `<p class="ssub">Your booked classes, and what is left of the weekly plan.</p>` +
-    scheduleGrid(lessons) +
-    quotaMeter(lessons, n.quota) +
+    `<h2><span class="num">${esc(num)}</span><span>Plan for the weeks ahead</span></h2>` +
+    `<p class="ssub">Your booked classes for the two weeks after this recap, and what is left of each weekly plan.</p>` +
+    `<div class="wk sched" role="table" aria-label="${esc(`Classes ${span}`)}">${head}${weeks.map((w) => weekRows(w, sc.quota)).join("")}</div>` +
+    planFacts(sc) +
     `</div></section>`
   );
 }
@@ -284,29 +297,31 @@ export const SECTION_STYLES = `
 /* ----- recap v2: plan (teal mirror of the practice frame) ----- */
 .mk .planbox{background:linear-gradient(180deg,var(--teal-wash),transparent 130px);border:1px solid rgba(31,111,104,.28);border-radius:16px;padding:14px 13px 12px;margin:12px 0}
 .mk .planbox h2{margin-bottom:4px}
-/* ----- plan: next week's classes (Mon–Sun grid) + the weekly-plan meter ----- */
-.mk .wk{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(7,minmax(0,1fr));gap:7px 4px;align-items:center;margin:10px 0 8px}
-.mk .wkhead,.mk .wkrow{display:contents}
+/* ----- plan: the weeks ahead (Mon–Sun rows of classes, a quota meter under each) ----- */
+.mk .wk{display:grid;grid-template-columns:minmax(0,1.7fr) repeat(7,minmax(0,1fr));gap:6px 4px;align-items:center;margin:10px 0 4px}
+.mk .wkhead,.mk .wkrow,.mk .wkmeter{display:contents}
 .mk .wkd{font-size:.58rem;font-weight:800;letter-spacing:.06em;color:var(--mmuted);text-align:center}
 .mk .wklbl{min-width:0;padding-right:6px;font-size:.78rem;color:var(--ink-soft)}
+.mk .wkrow .wklbl b{font-family:var(--disp);font-size:.92rem;color:var(--mink);font-weight:600}
 .mk .wkc{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:38px;border-radius:8px;background:var(--surface);border:1px solid var(--mline-soft);font-size:.66rem;font-weight:800;color:#fff;letter-spacing:.02em}
 .mk .wkc.on{border-color:transparent}
 .mk .wkc.on.done{background:var(--teal)}
 .mk .wkc.on.booked{background:var(--acc)}
 .mk .wkc b{font-weight:800;line-height:1.2}
-.mk .quota{margin:8px 0 2px}
-.mk .qbar{display:flex;gap:3px;height:10px;margin:2px 0 7px}
+.mk .qwrap{grid-column:2 / span 7;display:flex;flex-direction:column;gap:5px;margin:-1px 0 10px}
+.mk .qbar{display:flex;gap:3px;height:9px}
 .mk .qs{flex:1;border-radius:99px;background:var(--surface);border:1px solid var(--mline)}
 .mk .qs.done{background:var(--teal);border-color:var(--teal)}
 .mk .qs.booked{background:var(--acc);border-color:var(--acc)}
-.mk .qcap{margin:0;font-size:.8rem;color:var(--ink-soft)}
+.mk .qcap{font-size:.76rem;color:var(--ink-soft)}
+.mk .qcap b{color:var(--mink)}
 .mk .qk{display:inline-block;width:8px;height:8px;border-radius:99px;margin-right:4px;vertical-align:middle;background:var(--surface);border:1px solid var(--mline)}
 .mk .qk.done{background:var(--teal);border-color:var(--teal)}
 .mk .qk.booked{background:var(--acc);border-color:var(--acc)}
-.mk .qcap b{color:var(--mink)}
-@media (max-width:599px){.mk .wk{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 3px}.mk .wkhead .wklbl{display:none}.mk .wkrow .wklbl{grid-column:1 / -1;margin-top:4px;padding-right:0}}
+.mk .pfacts{margin:2px 0 0;font-size:.76rem;color:var(--mmuted)}
+@media (max-width:599px){.mk .wk{grid-template-columns:repeat(7,minmax(0,1fr));gap:5px 3px}.mk .wkhead .wklbl{display:none}.mk .wkrow .wklbl{grid-column:1 / -1;margin-top:6px;padding-right:0}.mk .wkmeter .wklbl{display:none}.mk .qwrap{grid-column:1 / -1}}
 /* ----- recap v2: wrapping + responsive ----- */
-.mk .lead,.mk .rvcard .pt,.mk .rvcard .rq,.mk .rvcard .iss,.mk .rvcard .fx,.mk .lvsum,.mk .dev,.mk .advice b,.mk .advice span,.mk .qcap,.mk .wklbl,.mk .planbox h2{overflow-wrap:anywhere;word-break:break-word}
+.mk .lead,.mk .rvcard .pt,.mk .rvcard .rq,.mk .rvcard .iss,.mk .rvcard .fx,.mk .lvsum,.mk .dev,.mk .advice b,.mk .advice span,.mk .qcap,.mk .pfacts,.mk .planbox h2{overflow-wrap:anywhere;word-break:break-word}
 .mk .planbox h2{min-width:0}
 .mk .planbox h2 .num{flex:0 0 auto;white-space:nowrap;overflow-wrap:normal;word-break:normal}
 @media (min-width:480px){.mk .lvhero{grid-template-columns:auto 1fr}}

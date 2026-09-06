@@ -36,7 +36,7 @@ test("chipNav renders one jump link per present section, in order, and nothing f
   assert.equal(legacy, '<nav class="chips" aria-label="Recap sections"><a href="#m-vocab">Vocabulary</a><a href="#m-grammar">Grammar</a><a href="#m-phrasing">Phrasing</a><a href="#m-practice">Practice</a><a href="#m-classes">Class log</a></nav>');
   const v2 = chipNav(goldenWeekV2());
   assert.ok(v2.startsWith('<nav class="chips" aria-label="Recap sections"><a href="#m-level">Level</a><a href="#m-review">Review</a><a href="#m-vocab">'));
-  assert.ok(v2.endsWith('<a href="#m-plan">Next week</a><a href="#m-classes">Class log</a></nav>'));
+  assert.ok(v2.endsWith('<a href="#m-plan">Plan</a><a href="#m-classes">Class log</a></nav>'));
   assert.equal((v2.match(/<a /g) || []).length, 8);
 });
 
@@ -122,42 +122,46 @@ test("levelSection: A2 fills exactly one cell, C1 fills all seven; zero advice o
 
 // ── plan = next week's schedule + quota ───────────────────────────────────────────
 
-test("planSection returns '' without vm.nextWeek, else the teal frame: title with the next-week label, a Mon–Sun row of class cells and the quota meter — no LLM plan text", () => {
+test("planSection returns '' without vm.schedule, else the teal frame: one Mon–Sun row + quota meter per week ahead, the plan facts once — no LLM plan text", () => {
   assert.equal(planSection(goldenWeek(), "07"), "");
   assert.equal(planSection({ plan: goldenWeekV2().plan }, "07"), "", "the LLM plan alone renders nothing");
   const html = planSection(goldenWeekV2(), "07");
-  assert.ok(html.startsWith('<section id="m-plan" class="pad"><div class="planbox"><h2><span class="num">07</span><span>Plan for the week of <span class="nowrap">Jun 1–7</span></span></h2>'));
-  const grid = /<div class="wk sched" role="table"[\s\S]*?<\/div><div class="quota">/.exec(html);
-  assert.ok(grid, "grid then meter");
-  assert.equal((grid[0].match(/role="columnheader"/g) || []).length, 7);
-  assert.equal((grid[0].match(/<div class="wkrow" role="row">/g) || []).length, 1, "one Classes row");
-  assert.ok(grid[0].includes('<span class="wkc on done" role="cell" title="Tue Jun 2 · 20:00 · 60 min · with Alex R. · done"'), "a done class is a teal cell with its time");
-  assert.ok(grid[0].includes('<b>20:00</b>'));
-  assert.ok(grid[0].includes('class="wkc on booked"') && grid[0].includes('<b>18:00</b><b>21:00</b>'), "two Thursday classes stack their times in one booked cell");
-  assert.ok(grid[0].includes('with Sam T. &lt;script&gt;n()&lt;/script&gt; · booked'), "tutor name escaped inside the title");
-  assert.equal((grid[0].match(/<span class="wkc" role="cell" aria-hidden="true"><\/span>/g) || []).length, 5, "five empty days");
-  assert.ok(html.includes('<div class="qbar" role="img" aria-label="1 done, 2 booked, 2 open of 5 classes">'));
-  assert.deepEqual(html.match(/<i class="qs (done|booked|open)"><\/i>/g).map((m) => /qs (\w+)/.exec(m)[1]), ["done", "booked", "booked", "open", "open"]);
-  assert.ok(html.includes('<p class="qcap"><i class="qk done"></i><b>1</b> done · <i class="qk booked"></i><b>2</b> booked · <i class="qk open"></i><b>2</b> open of 5 classes · 60 min each · premium · with Alex R., Sam T. &lt;script&gt;n()&lt;/script&gt;</p>'));
+  assert.ok(html.startsWith('<section id="m-plan" class="pad"><div class="planbox"><h2><span class="num">07</span><span>Plan for the weeks ahead</span></h2>'));
+  assert.ok(html.includes('aria-label="Classes 2026-06-01 to 2026-06-14"'));
+  assert.equal((html.match(/role="columnheader"/g) || []).length, 7, "one header row");
+  assert.equal((html.match(/<div class="wkrow" role="row">/g) || []).length, 2, "one classes row per week");
+  assert.equal((html.match(/<div class="wkmeter" role="row">/g) || []).length, 2, "one meter per week");
+  assert.ok(html.includes('<span class="wklbl" role="rowheader"><b><span class="nowrap">Jun 1–7</span></b></span>'), "week labels are the row headers, non-breaking");
+  assert.ok(html.includes('<b><span class="nowrap">Jun 8–14</span></b>'));
+  assert.ok(html.includes('<span class="wkc on done" role="cell" title="Tue Jun 2 · 20:00 · 60 min · with Alex R. · done"'), "a done class is a teal cell with its time");
+  assert.ok(html.includes('class="wkc on booked"') && html.includes('<b>18:00</b><b>21:00</b>'), "two Thursday classes stack their times in one booked cell");
+  assert.ok(html.includes('with Sam T. &lt;script&gt;n()&lt;/script&gt; · booked'), "tutor name escaped inside the title");
+  assert.equal((html.match(/<span class="wkc" role="cell" aria-hidden="true"><\/span>/g) || []).length, 5 + 6, "empty days: five in week one, six in week two");
+  const meters = [...html.matchAll(/<span class="qbar" role="img" aria-label="([^"]+)">/g)].map((m) => m[1]);
+  assert.deepEqual(meters, ["1 done, 2 booked, 2 open of 5", "0 done, 1 booked, 4 open of 5"]);
+  assert.deepEqual(html.match(/<i class="qs (done|booked|open)"><\/i>/g).map((m) => /qs (\w+)/.exec(m)[1]).slice(0, 5), ["done", "booked", "booked", "open", "open"]);
+  assert.ok(html.includes('<span class="qcap"><i class="qk done"></i><b>1</b> done · <i class="qk booked"></i><b>2</b> booked · <i class="qk open"></i><b>2</b> open</span>'));
+  assert.ok(html.includes('<p class="pfacts">5 × 60 min per week · premium · with Alex R., Sam T. &lt;script&gt;n()&lt;/script&gt;</p>'), "plan facts once, tutors from both weeks, escaped");
   assert.ok(!html.includes("Ask your tutor") && !html.includes('class="pfocus"') && !html.includes('<ul class="plan">'), "no plan prose");
   assert.ok(!html.includes("<script>n()"), "no live script");
-  assert.ok(html.endsWith("</div></div></section>"));
+  assert.ok(html.endsWith("</p></div></section>"));
 });
 
-test("planSection: an empty week and an unknown quota degrade honestly (no bar, counts only)", () => {
+test("planSection: an empty week and an unknown quota degrade honestly (no bar, counts only); more classes than the plan → the bar grows, open never negative", () => {
   const vm = goldenWeekV2();
-  vm.nextWeek = { ...vm.nextWeek, lessons: [], quota: { lessonsPerWeek: null, minutesPerLesson: null, tier: null, planType: null } };
+  vm.schedule = { ...vm.schedule, weeks: [{ ...vm.schedule.weeks[0], lessons: [] }], quota: { lessonsPerWeek: null, minutesPerLesson: null, tier: null, planType: null } };
   const html = planSection(vm, "07");
   assert.equal((html.match(/class="wkc on/g) || []).length, 0);
   assert.ok(!html.includes('class="qbar"'), "no meter without a plan size or classes");
-  assert.ok(html.includes('<p class="qcap"><i class="qk done"></i><b>0</b> done · <i class="qk booked"></i><b>0</b> booked</p>'));
-  vm.nextWeek.quota.lessonsPerWeek = 3;
-  vm.nextWeek.lessons = goldenWeekV2().nextWeek.lessons.slice(0, 2);
-  const html2 = planSection(vm, "07");
-  assert.deepEqual(html2.match(/<i class="qs (done|booked|open)"><\/i>/g).map((m) => /qs (\w+)/.exec(m)[1]), ["done", "booked", "open"]);
-  vm.nextWeek.lessons = [...goldenWeekV2().nextWeek.lessons, { lessonId: "N4", startAt: "2026-06-06T10:00:00+08:00", minutes: 60, tutor: "", state: "confirmed" }];
+  assert.ok(html.includes('<span class="qcap"><i class="qk done"></i><b>0</b> done · <i class="qk booked"></i><b>0</b> booked</span>'));
+  assert.ok(!html.includes('class="pfacts"'), "no facts line without plan data or tutors");
+  assert.ok(html.includes('aria-label="Classes Jun 1–7"'), "a single week uses its own label");
+  vm.schedule.quota.lessonsPerWeek = 3;
+  vm.schedule.weeks[0].lessons = goldenWeekV2().schedule.weeks[0].lessons.slice(0, 2);
+  assert.deepEqual(planSection(vm, "07").match(/<i class="qs (done|booked|open)"><\/i>/g).map((m) => /qs (\w+)/.exec(m)[1]), ["done", "booked", "open"]);
+  vm.schedule.weeks[0].lessons = [...goldenWeekV2().schedule.weeks[0].lessons, { lessonId: "N9", startAt: "2026-06-06T10:00:00+08:00", minutes: 60, tutor: "", state: "confirmed" }];
   const html3 = planSection(vm, "07");
-  assert.equal((html3.match(/<i class="qs /g) || []).length, 4, "more classes than the plan size → the bar grows, open never negative");
+  assert.equal((html3.match(/<i class="qs /g) || []).length, 4);
   assert.ok(html3.includes("<b>0</b> open"));
 });
 

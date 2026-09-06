@@ -232,16 +232,21 @@ export function goldenWeekV2(overrides = {}) {
         { title: "Open a topic yourself <script>a()</script>", detail: "Once per class, bring a question the tutor did not ask." }, // XSS probe
       ],
     },
-    nextWeek: {
-      weekId: "2026-06-01",
-      weekLabel: "Jun 1–7",
-      startDate: "2026-06-01",
-      endDate: "2026-06-07",
+    schedule: {
       fetchedAt: "2026-06-01T07:30:00+08:00",
-      lessons: [
-        { lessonId: "N1", startAt: "2026-06-02T20:00:00+08:00", minutes: 60, tutor: "Alex R.", state: "done" }, // Tue
-        { lessonId: "N2", startAt: "2026-06-04T18:00:00+08:00", minutes: 60, tutor: "Alex R.", state: "confirmed" }, // Thu
-        { lessonId: "N3", startAt: "2026-06-04T21:00:00+08:00", minutes: 30, tutor: "Sam T. <script>n()</script>", state: "confirmed" }, // Thu, 2nd; XSS probe
+      weeks: [
+        {
+          weekId: "2026-06-01", weekLabel: "Jun 1–7", startDate: "2026-06-01", endDate: "2026-06-07",
+          lessons: [
+            { lessonId: "N1", startAt: "2026-06-02T20:00:00+08:00", minutes: 60, tutor: "Alex R.", state: "done" }, // Tue
+            { lessonId: "N2", startAt: "2026-06-04T18:00:00+08:00", minutes: 60, tutor: "Alex R.", state: "confirmed" }, // Thu
+            { lessonId: "N3", startAt: "2026-06-04T21:00:00+08:00", minutes: 30, tutor: "Sam T. <script>n()</script>", state: "confirmed" }, // Thu, 2nd; XSS probe
+          ],
+        },
+        {
+          weekId: "2026-06-08", weekLabel: "Jun 8–14", startDate: "2026-06-08", endDate: "2026-06-14",
+          lessons: [{ lessonId: "N4", startAt: "2026-06-10T18:00:00+08:00", minutes: 60, tutor: "Alex R.", state: "confirmed" }], // Wed
+        },
       ],
       quota: { lessonsPerWeek: 5, minutesPerLesson: 60, tier: "premium", planType: "perWeek" },
     },

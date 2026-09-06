@@ -209,7 +209,7 @@ test(
     assert.deepEqual(ids, ["m-level", "m-review", "m-vocab", "m-grammar", "m-phrasing", "m-practice", "m-classes"]);
     assert.deepEqual([...html.matchAll(/<span class="num">([0-9]{2}|[A-Z])<\/span>/g)].map((m) => m[1]), ["01", "02", "03", "04", "05", "06", "A"]);
     assert.match(html, /<span class="lvbig">B1\+<\/span>/);
-    assert.ok(!html.includes("Plan for the week of"), "the LLM plan is data only — the plan section needs the online nextWeek block");
+    assert.ok(!html.includes("Plan for the weeks ahead"), "the LLM plan is data only — the plan section needs the online schedule block");
     assert.equal(typeof vm.plan.focus, "string", "…but the VM still carries the plan");
     const pqCards = (html.match(/<button class="pq" aria-expanded="false" aria-controls="pa\d+">/g) || []).length;
     assert.ok(pqCards >= 1, `≥1 tap-to-reveal card in HTML (got ${pqCards})`);

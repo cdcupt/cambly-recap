@@ -271,20 +271,20 @@ test("v2: a VM carrying every block renders all eight sections in order Level ·
   assert.match(html, /<span class="num">01<\/span>Level estimate<\/h2>/, "the level estimate leads the page");
   assert.match(html, /<span class="num">02<\/span>The week in review<\/h2>/);
   assert.match(html, /<span class="num">06<\/span>Practice — tap to reveal<\/h2>/);
-  assert.match(html, /<span class="num">07<\/span><span>Plan for the week of <span class="nowrap">Jun 1–7<\/span><\/span><\/h2>/);
+  assert.match(html, /<span class="num">07<\/span><span>Plan for the weeks ahead<\/span><\/h2>/);
   assert.match(html, /<section id="m-classes" class="pad appendix"><h2><span class="num">A<\/span>Appendix · The class log<\/h2>/, "the class log is the lettered appendix");
   assert.ok(html.lastIndexOf('<section id="m-classes"') > html.lastIndexOf('<section id="m-plan"'), "the appendix comes after the plan");
 });
 
 test("v2: numbering stays sequential when only SOME optional blocks are present (chips follow)", () => {
-  const levelOnly = renderWeek(goldenWeekV2({ review: undefined, plan: undefined, nextWeek: undefined }));
+  const levelOnly = renderWeek(goldenWeekV2({ review: undefined, plan: undefined, schedule: undefined }));
   assert.deepEqual(sectionIds(levelOnly), ["m-level", ...LEGACY_BODY, "m-classes"]);
   assert.deepEqual(sectionNums(levelOnly), ["01", "02", "03", "04", "05", "A"]);
   assert.deepEqual(chipHrefs(levelOnly), ["m-level", ...LEGACY_BODY, "m-classes"]);
   const planOnly = renderWeek(goldenWeekV2({ review: null, level: null }));
   assert.deepEqual(sectionIds(planOnly), [...LEGACY_BODY, "m-plan", "m-classes"]);
   assert.deepEqual(sectionNums(planOnly), ["01", "02", "03", "04", "05", "A"]);
-  assert.match(planOnly, /<span class="num">05<\/span><span>Plan for the week of/);
+  assert.match(planOnly, /<span class="num">05<\/span><span>Plan for the weeks ahead/);
 });
 
 test("v2: the header names the tutor; each class card reads an eyebrow (min · with <tutor>) and the title-or-topic as its headline", () => {
@@ -468,13 +468,13 @@ test("header tutor line: all named → 'with A, B'; some unnamed → 'with Alex 
 
 test("cross-month week labels never break at the spaced en dash: h1, Plan title and footer nav wrap the label in .nowrap; the CSS rule exists", () => {
   const vm = goldenWeekV2({ weekLabel: "Jun 29 – Jul 5" });
-  vm.nextWeek.weekLabel = "Jul 27 – Aug 2";
+  vm.schedule.weeks[0].weekLabel = "Jul 27 – Aug 2";
   const html = renderWeek(vm, {
     prev: { weekId: "2026-06-22", weekLabel: "Jun 22–28" },
     next: { weekId: "2026-07-06", weekLabel: "Jul 6–12" },
   });
   assert.ok(html.includes('<h1>Week of <span class="accent"><span class="nowrap">Jun 29 – Jul 5</span></span></h1>'), "h1");
-  assert.ok(html.includes('<h2><span class="num">07</span><span>Plan for the week of <span class="nowrap">Jul 27 – Aug 2</span></span></h2>'), "plan title: one title span (the h2 is a flex row) around the nowrap label");
+  assert.ok(html.includes('<span class="wklbl" role="rowheader"><b><span class="nowrap">Jul 27 – Aug 2</span></b></span>'), "schedule row label: the nowrap week label");
   assert.ok(html.includes('<a href="2026-06-22.html"><span>← Week of <span class="nowrap">Jun 22–28</span></span></a>'), "footer prev");
   assert.ok(html.includes('<a href="2026-07-06.html"><span>Week of <span class="nowrap">Jul 6–12</span> →</span></a>'), "footer next");
   assert.match(STYLES, /\.mk \.nowrap\{white-space:nowrap;overflow-wrap:normal;word-break:normal\}/, "the rule also cancels the defensive overflow-wrap:anywhere inherited from its container");

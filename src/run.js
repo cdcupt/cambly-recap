@@ -68,7 +68,7 @@ import {
 } from "./tutors.js";
 import { generateWeekVM } from "./build.js";
 import { openaiBase, openaiKey, openaiModel, summarizeWeek } from "./summarize.js";
-import { refreshNextWeek } from "./schedule.js";
+import { refreshSchedule } from "./schedule.js";
 import { buildSite, readWeeks, readSiteState, computeFacts } from "./render/site.js";
 import { writeHealthz } from "./render/healthz.js";
 import { OUTCOME, RECOVERY_COMMANDS, sendEmail, siteUrl } from "./mail.js";
@@ -380,8 +380,8 @@ export async function runGenerate(opts = {}) {
 
     // Tutor self-heal: name every published class whose tutor was lost (spec A2).
     tutorsPatched = patchTutorNames({ dataDir, fsImpl, tutorsMap, log });
-    // Next-week schedule + weekly quota on the target week (online only; never fails the run).
-    await refreshNextWeek({ dataDir, fsImpl, weekId: target, base, uid, headers, tutorsMap, now: nowMs, log, netOpts });
+    // The two weeks ahead (classes + weekly quota) on the target week — online only, never fails the run.
+    await refreshSchedule({ dataDir, fsImpl, weekId: target, base, uid, headers, tutorsMap, now: nowMs, log, netOpts });
 
     const targetVM = readWeekVM(dataDir, target, fsImpl);
     const targetEmpty = !targetVM || targetVM.isEmpty === true;

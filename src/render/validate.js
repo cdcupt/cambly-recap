@@ -78,7 +78,7 @@ export function validateWeek(vm) {
   validateReview(vm);
   validateLevel(vm);
   validatePlan(vm);
-  validateNextWeek(vm);
+  validateSchedule(vm);
 }
 
 /** An optional ▣ quote: null/undefined means "no quote"; a present one must be non-empty. */
@@ -215,24 +215,28 @@ const LESSON_STATES = new Set(["done", "confirmed", "other"]);
 const intOrNull = (v) => v === null || (Number.isInteger(v) && v >= 0);
 const strOrNullOk = (v) => v === null || isNonEmptyString(v);
 
-/** WeekVM.nextWeek (optional, builder-owned): the coming week's lessons + weekly quota. */
-function validateNextWeek(vm) {
-  const n = vm.nextWeek;
-  if (n === undefined || n === null) return;
-  const at = `week ${vm.weekId}: nextWeek`;
-  if (typeof n !== "object") fail(`${at} must be an object`);
-  for (const f of ["weekId", "weekLabel", "startDate", "endDate", "fetchedAt"]) {
-    if (!isNonEmptyString(n[f])) fail(`${at}.${f} empty`);
+/** WeekVM.schedule (optional, builder-owned): the weeks after the recap — classes + weekly quota. */
+function validateSchedule(vm) {
+  const sc = vm.schedule;
+  if (sc === undefined || sc === null) return;
+  const at = `week ${vm.weekId}: schedule`;
+  if (typeof sc !== "object") fail(`${at} must be an object`);
+  if (!isNonEmptyString(sc.fetchedAt)) fail(`${at}.fetchedAt empty`);
+  if (!Array.isArray(sc.weeks) || sc.weeks.length === 0) fail(`${at}.weeks must be a non-empty array`);
+  for (const [wi, w] of sc.weeks.entries()) {
+    for (const f of ["weekId", "weekLabel", "startDate", "endDate"]) {
+      if (!w || !isNonEmptyString(w[f])) fail(`${at}.weeks[${wi}].${f} empty`);
+    }
+    if (!Array.isArray(w.lessons)) fail(`${at}.weeks[${wi}].lessons must be an array`);
+    for (const [i, l] of w.lessons.entries()) {
+      if (!l || !isNonEmptyString(l.lessonId)) fail(`${at}.weeks[${wi}].lessons[${i}].lessonId empty`);
+      if (!isNonEmptyString(l.startAt)) fail(`${at}.weeks[${wi}].lessons[${i}].startAt empty`);
+      if (!intOrNull(l.minutes)) fail(`${at}.weeks[${wi}].lessons[${i}].minutes must be an integer or null`);
+      if (typeof l.tutor !== "string") fail(`${at}.weeks[${wi}].lessons[${i}].tutor must be a string`);
+      if (!LESSON_STATES.has(l.state)) fail(`${at}.weeks[${wi}].lessons[${i}].state invalid`);
+    }
   }
-  if (!Array.isArray(n.lessons)) fail(`${at}.lessons must be an array`);
-  for (const [i, l] of n.lessons.entries()) {
-    if (!l || !isNonEmptyString(l.lessonId)) fail(`${at}.lessons[${i}].lessonId empty`);
-    if (!isNonEmptyString(l.startAt)) fail(`${at}.lessons[${i}].startAt empty`);
-    if (!intOrNull(l.minutes)) fail(`${at}.lessons[${i}].minutes must be an integer or null`);
-    if (typeof l.tutor !== "string") fail(`${at}.lessons[${i}].tutor must be a string`);
-    if (!LESSON_STATES.has(l.state)) fail(`${at}.lessons[${i}].state invalid`);
-  }
-  const q = n.quota;
+  const q = sc.quota;
   if (!q || typeof q !== "object") fail(`${at}.quota must be an object`);
   if (!intOrNull(q.lessonsPerWeek) || !intOrNull(q.minutesPerLesson)) fail(`${at}.quota counts must be integers or null`);
   if (!strOrNullOk(q.tier) || !strOrNullOk(q.planType)) fail(`${at}.quota.tier/planType must be strings or null`);
